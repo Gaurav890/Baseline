@@ -29,9 +29,27 @@ class AgentRunner:
         name: str, task: str, context: dict[str, Any], observations: list[dict[str, Any]]
     ) -> dict[str, Any]:
         if name == "web_search":
-            return {"query": task, "sources": context.get("sources", [])}
+            payload = {"query": task, "sources": context.get("sources", [])}
+            for key in (
+                "connector",
+                "cik",
+                "operation",
+                "owner",
+                "repo",
+                "repository",
+                "issue_number",
+                "state",
+                "max_results",
+            ):
+                if key in context:
+                    payload[key] = context[key]
+            return payload
         if name == "document_search":
-            return {"query": task, "document": context.get("document", "")}
+            return {
+                "query": task,
+                "document": context.get("document", ""),
+                **({"url": context["url"]} if context.get("url") else {}),
+            }
         if name == "ticket_lookup":
             return {
                 "ticket_id": context.get("ticket_id", "TKT-DEMO"),
@@ -114,7 +132,27 @@ class AgentRunner:
                 payload = self._payload_for_tool(
                     tool_name, request.task, request.context, observations
                 )
-                result = self.tools.execute(tool_name, payload)
+                try:
+                    execution = self.tools.execute_with_metadata(tool_name, payload)
+                except Exception as exc:
+                    duration = max(1, int((time.perf_counter() - tool_started) * 1000))
+                    db.add(
+                        TraceSpan(
+                            run_id=run.id,
+                            parent_id=root.id,
+                            kind="tool",
+                            name=tool_name,
+                            status="error",
+                            started_at=tool_started_at,
+                            ended_at=_utcnow(),
+                            duration_ms=duration,
+                            input=payload,
+                            output={"error": str(exc), "error_type": type(exc).__name__},
+                            attributes={"attempt": 1},
+                        )
+                    )
+                    raise
+                result = execution.output
                 duration = max(1, int((time.perf_counter() - tool_started) * 1000))
                 observations.append({"tool": tool_name, "result": result})
                 actual_tools.append(tool_name)
@@ -129,7 +167,10 @@ class AgentRunner:
                         duration_ms=duration,
                         input=payload,
                         output=result,
-                        attributes={"attempt": 1},
+                        attributes={
+                            "attempt": 1,
+                            **execution.metadata.as_trace_attributes(),
+                        },
                     )
                 )
 

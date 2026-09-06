@@ -1,3 +1,5 @@
+import json
+
 from app.evals.catalog import GOLDEN_SCENARIOS
 from app.evals.evaluators import evaluate_run
 
@@ -5,10 +7,7 @@ from app.evals.evaluators import evaluate_run
 def test_exact_golden_output_passes() -> None:
     scenario = GOLDEN_SCENARIOS[0]
     result = evaluate_run(
-        output=(
-            '{"answer":"The evidence identifies vendor concentration risk as a monitored control '
-            'area.","confidence":"high","sources":["https://evidence.example/research/1"]}'
-        ),
+        output=json.dumps(scenario.expected),
         actual_tools=list(scenario.expected_tools),
         scenario=scenario,
     )
@@ -38,4 +37,3 @@ def test_unsupported_url_counts_as_hallucination() -> None:
         scenario=scenario,
     )
     assert result.hallucination_rate == 1
-

@@ -13,11 +13,28 @@ services:
     volumes:
       - baseline-data:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   api:
     build: ./backend
     environment:
+      ENVIRONMENT: development
+      DEMO_MODE: ${DEMO_MODE:-false}
+      BASELINE_FIXTURE_CONNECTORS: ${BASELINE_FIXTURE_CONNECTORS:-false}
       DATABASE_URL: postgresql+psycopg://baseline:baseline@postgres:5432/baseline
       FRONTEND_ORIGIN: http://localhost:3000
+      JOB_BACKEND: ${JOB_BACKEND:-inline}
+      REDIS_URL: redis://redis:6379/0
+      SEC_USER_AGENT: ${SEC_USER_AGENT:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -26,11 +43,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
 
   web:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+        NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-false}
+        NEXT_PUBLIC_EVAL_PROVIDER: ${NEXT_PUBLIC_EVAL_PROVIDER:-openai}
     environment:
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-false}
+      NEXT_PUBLIC_EVAL_PROVIDER: ${NEXT_PUBLIC_EVAL_PROVIDER:-openai}
     ports:
       - "3000:3000"
     depends_on:
@@ -38,4 +64,3 @@ services:
 
 volumes:
   baseline-data:
-

@@ -22,6 +22,30 @@ export type RecentRun = {
   created_at: string;
 };
 
+export type TraceSpan = {
+  id: string;
+  parent_id: string | null;
+  kind: string;
+  name: string;
+  status: string;
+  duration_ms: number;
+  input: Record<string, unknown>;
+  output: Record<string, unknown>;
+  attributes: Record<string, unknown>;
+  started_at: string;
+};
+
+export type RunDetail = RecentRun & {
+  spans: TraceSpan[];
+  evaluations: Array<{
+    score: number;
+    passed: boolean;
+    failure_classification: string | null;
+    rubric: Record<string, unknown>;
+    rationale: string;
+  }>;
+};
+
 export type DashboardData = {
   generated_at: string;
   quality: {
@@ -64,3 +88,47 @@ export type DashboardData = {
   recent_runs: RecentRun[];
 };
 
+export type IntegrationHealth =
+  | "unconfigured"
+  | "unchecked"
+  | "healthy"
+  | "degraded"
+  | "unhealthy"
+  | "unknown";
+
+export type Provenance = "LIVE" | "SNAPSHOT" | "SYNTHETIC";
+
+export type Integration = {
+  id: string;
+  name: string;
+  display_name: string;
+  configured: boolean;
+  health_status: IntegrationHealth;
+  provenance: Provenance | null;
+  live: boolean;
+  last_checked_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  latency_ms?: number | null;
+  event_count: number;
+  metadata: Record<string, unknown>;
+};
+
+export type IntegrationsResponse = {
+  items: Integration[];
+  generated_at: string;
+};
+
+export type EvaluationJob = {
+  id: string;
+  kind: "regression" | "benchmark";
+  status: "queued" | "running" | "completed" | "failed";
+  request: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  error: string | null;
+  attempts: number;
+  queue_backend: string;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};

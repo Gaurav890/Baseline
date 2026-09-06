@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 AgentType = Literal["research", "document", "support", "extraction"]
 ProviderType = Literal["mock", "openai", "anthropic", "gemini"]
@@ -99,3 +99,74 @@ class BenchmarkRequest(BaseModel):
 class JudgeRequest(BaseModel):
     provider: ProviderType = "mock"
     model: str | None = None
+
+
+JobKind = Literal["regression", "benchmark", "pr_evaluation"]
+JobStatus = Literal["queued", "running", "completed", "failed"]
+
+
+class EvaluationJobCreate(BaseModel):
+    kind: JobKind
+    regression: RegressionRequest | None = None
+    benchmark: BenchmarkRequest | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_parameters(self) -> EvaluationJobCreate:
+        if self.kind in {"regression", "pr_evaluation"} and self.benchmark is not None:
+            raise ValueError("benchmark parameters are not valid for this job kind")
+        if self.kind == "benchmark" and self.regression is not None:
+            raise ValueError("regression parameters are not valid for benchmark jobs")
+        return self
+
+    def job_payload(self) -> dict[str, Any]:
+        if self.kind in {"regression", "pr_evaluation"}:
+            request = self.regression or RegressionRequest()
+        else:
+            request = self.benchmark or BenchmarkRequest()
+        return {
+            "kind": self.kind,
+            "parameters": request.model_dump(mode="json"),
+            "metadata": self.metadata,
+        }
+
+
+class EvaluationJobRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    kind: str
+    status: JobStatus
+    request: dict[str, Any]
+    result: dict[str, Any] | None
+    error: str | None
+    attempts: int
+    queue_backend: str
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+
+
+class EvaluationJobResult(BaseModel):
+    job_id: str
+    status: JobStatus
+    result: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class IntegrationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    display_name: str
+    configured: bool
+    health_status: str
+    provenance: str | None
+    live: bool
+    last_checked_at: datetime | None
+    last_success_at: datetime | None
+    last_error: str | None
+    latency_ms: int | None
+    event_count: int
+    metadata: dict[str, Any] = Field(validation_alias="metadata_json")

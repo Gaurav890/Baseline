@@ -90,7 +90,9 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
             "hallucination_rate": _average(
                 [evaluation.hallucination_rate for evaluation in evaluations]
             ),
-            "failure_rate": round(1 - len(completed) / max(1, len(runs)), 4),
+            "failure_rate": (
+                round(1 - len(completed) / len(runs), 4) if runs else 0.0
+            ),
             "eval_pass_rate": round(
                 sum(evaluation.passed for evaluation in evaluations) / max(1, len(evaluations)), 4
             ),
@@ -154,4 +156,3 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
             for run in runs[:8]
         ],
     }
-

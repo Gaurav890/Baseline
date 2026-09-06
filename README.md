@@ -2,152 +2,128 @@
 
 **The reliability control plane for AI agents.**
 
-Baseline answers one question: _How do we know this agent actually works?_
-
-It is an eval-driven development platform with four task agents, 218 golden regression scenarios, trace-level observability, human review, and apples-to-apples model benchmarking across GPT, Claude, and Gemini.
+Baseline is a FastAPI and Next.js platform for running agents, recording evidence-rich traces, comparing models, and gating changes against exactly 218 regression scenarios.
 
 ![Baseline dashboard overview](docs/dashboard-preview.svg)
 
-## What is included
+_Design preview with synthetic values; the production UI never substitutes these for API data._
 
-- Four reviewable agents: research, document analysis, support resolution, and structured-data extraction.
-- A full run record: user task → planner → tool calls → final output → evaluator → score and failure class.
-- Quality metrics: completion, correctness, tool selection, hallucination, failure, and evaluation pass rates.
-- Operational metrics: p50/p95 latency, token volume, per-task cost, retries, and escalation rate.
-- Six evaluation modes: deterministic checks, golden datasets, rubric scoring, provider-backed judge support, human review, and regression testing.
-- Multi-model adapters for OpenAI, Anthropic, and Gemini, with a zero-cost deterministic provider for local development and CI.
-- A GitHub Actions gate that runs all 218 scenarios on every pull request.
-- A FastAPI/PostgreSQL backend and a responsive Next.js dashboard.
+## Production behavior
 
-## Architecture
+Production never seeds or substitutes fabricated metrics. `DEMO_MODE=false` and `NEXT_PUBLIC_DEMO_MODE=false` are the defaults; an empty database renders an honest empty state and an unavailable API renders a connection error. The backend rejects demo mode, fixture connectors, SQLite, inline jobs, HTTP frontend origins, or a missing SEC contact identity when `ENVIRONMENT=production`.
 
-```text
-User task
-   ↓
-Agent profile ──→ deterministic planner
-   ↓                     ↓
-Tool registry ←──── selected tool calls
-   ↓
-Provider adapter (GPT / Claude / Gemini / mock)
-   ↓
-Final output
-   ↓
-Evaluators ──→ score + rubric + failure classification
-   ↓
-PostgreSQL run, spans, usage, cost, review, and suite history
-```
-
-Every run remains useful even when it fails. Execution errors, incomplete answers, wrong tools, hallucinations, and incorrect answers are persisted as explicit failure classes rather than disappearing into logs.
-
-See [the detailed architecture](docs/architecture.md) for the data model and extension points.
+Every connector observation carries its source URL, retrieval time, content SHA-256, connector name, latency, and `LIVE`, `SNAPSHOT`, or `SYNTHETIC` provenance. The dashboard labels a source `LIVE` only after a successful health check.
 
 ## Run locally
-
-The fastest path is Docker:
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The API and its interactive schema are at [http://localhost:8000/docs](http://localhost:8000/docs).
+Open [http://localhost:3000](http://localhost:3000); API docs are at [http://localhost:8000/docs](http://localhost:8000/docs). Local mode starts empty. To preview synthetic data explicitly, set both `DEMO_MODE=true` and `NEXT_PUBLIC_DEMO_MODE=true`.
 
-Baseline starts with a clearly labeled demo dataset, so the complete dashboard is useful without provider keys. Add any keys you want to benchmark to `.env`; missing providers remain visible but unavailable.
-
-### Run without Docker
+Without Docker:
 
 ```bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn app.main:app --reload
+uv sync --dev
+uv run alembic upgrade head
+uv run uvicorn app.main:app --reload
 ```
-
-In a second terminal:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-## Run the evaluation gate
+For deterministic connector fixtures in tests only, set both `ENVIRONMENT=test` and `BASELINE_FIXTURE_CONNECTORS=true`. Production validation rejects fixture mode.
+
+## Connectors and provenance
+
+- SEC EDGAR uses the public submissions and company-facts APIs without a key. Set `SEC_USER_AGENT` to an application name plus monitored email address. `SEC_REQUESTS_PER_SECOND` defaults to 4 per process so the default API-plus-worker topology remains below the SEC's published 10-request/second ceiling.
+- Tavily is configured only when `TAVILY_API_KEY` is present.
+- GitHub reads public issues anonymously, or uses `GITHUB_TOKEN` for higher limits/private access explicitly granted to the token.
+- Direct URL retrieval is HTTPS-only, resolves and rejects private/link-local/reserved targets, follows only allowlisted hosts, enforces response limits and timeouts, and retries transient failures with backoff.
+
+The data-source panel reports configured state, last successful check, event count, and provenance. “Configured” is not treated as proof of connectivity.
+
+## Evaluation jobs
+
+Regression and benchmark runs use a persistent job contract. Local/tests use the synchronous `inline` backend; production uses the API plus Redis-backed worker.
+
+```bash
+curl -X POST http://localhost:8000/api/evaluation-jobs \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: pr-184-head-8f3c2a1' \
+  -d '{"kind":"regression","regression":{"provider":"mock","limit":218,"baseline_success_rate":0.90,"threshold":0.01}}'
+```
+
+Poll `GET /api/evaluation-jobs/{id}` and read `GET /api/evaluation-jobs/{id}/results`. Reusing a key with the same payload returns the original job; reusing it with a different payload is rejected. Headerless requests use a canonical-payload key scoped to the UTC hour, but callers should send an explicit stable key. Run the production worker with `python -m app.jobs.worker`.
+
+The checked-in gate remains deterministic:
 
 ```bash
 cd backend
-python -m app.evals.cli --provider mock --all --baseline 0.90 --threshold 0.01
+ENVIRONMENT=test BASELINE_FIXTURE_CONNECTORS=true uv run python -m app.evals.cli --provider mock --all --baseline 0.90 --threshold 0.01
 ```
 
-The command exits non-zero when the new success rate falls more than the allowed threshold below the baseline. A pull request therefore gets a concise, enforceable signal:
+Twenty of the 218 blocking scenarios are frozen, versioned snapshots derived from primary SEC and GitHub API payloads. Their retrieval timestamp, source URL, selected fields, and full-response hash are checked in at `backend/app/evals/snapshots/public_sources.v1.json`. Live SEC/GitHub canaries are defined separately, do not belong to the golden catalog, and never block CI.
 
-```text
-REGRESSION: 218 agent evals
-Previous: 91.2%
-Current:  88.7% (-2.5%)
-Failures: {'tool_selection': 18, 'incorrect_answer': 5, 'hallucination': 2}
-p95 latency: 2730ms | cost: $6.0200
-```
+## GitHub PR evaluation checks
 
-The checked-in deterministic suite currently passes all 218 scenarios. The dashboard includes a seeded regression snapshot to demonstrate the triage workflow; it is explicitly marked as demo data whenever the live API is unavailable.
+No GitHub App is created or registered by this repository. Perform these steps in GitHub:
 
-## Run a single trace
+1. Create a GitHub App owned by the target organization or account.
+2. Grant repository permissions **Pull requests: Read-only**, **Checks: Read and write**, and **Metadata: Read-only**. Do not grant Contents write, Administration, or organization permissions.
+3. Subscribe only to **Pull request** events.
+4. Set the webhook URL to `https://<api-host>/api/webhooks/github`, generate a strong random webhook secret, select `application/json`, and enable SSL verification.
+5. Install the App only on the repositories that should run evaluations.
+6. Set `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_ID`, the PEM `GITHUB_PRIVATE_KEY`, and an exact comma-separated `GITHUB_REPOSITORY_ALLOWLIST=owner/repo`. The worker exchanges the installation ID for short-lived tokens. `GITHUB_TOKEN` is a fallback that must have Checks write access. Then set `GITHUB_CHECKS_ENABLED=true` and redeploy both API and worker.
+7. Send GitHub’s ping and open or update a test pull request. Confirm the API accepts the signed delivery once, creates one idempotent job, and publishes the configured check name on the head SHA.
 
-```bash
-curl -X POST http://localhost:8000/api/runs \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "task": "Extract the email, date, and amount fields, then validate the record schema.",
-    "agent_type": "extraction",
-    "provider": "mock",
-    "context": {
-      "text": "Owner ada@example.com; renewal 2026-10-01; value $4200.00.",
-      "required": ["emails", "dates", "amounts"]
-    },
-    "scenario_id": "extraction-001"
-  }'
-```
-
-The response contains the planner output, every trace span, token and cost data, the final output, rubric scores, and a failure classification.
+The endpoint verifies `X-Hub-Signature-256` over the raw body, bounds payload size, validates delivery IDs, filters event/action types, and rejects repositories outside the allowlist. Use a secret manager and rotate the webhook secret and App private key regularly.
 
 ## API surface
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/dashboard` | Aggregated quality, operations, benchmark, and regression data |
-| `GET /api/agents` | Agent contracts, tools, models, and provider readiness |
-| `GET /api/scenarios` | Browse and filter the 218-scenario golden catalog |
-| `POST /api/runs` | Execute and evaluate one fully traced agent task |
-| `GET /api/runs/{id}` | Inspect a complete run trace |
-| `POST /api/runs/{id}/reviews` | Attach a human verdict and score |
-| `POST /api/runs/{id}/judge` | Run and persist an on-demand LLM-as-judge rubric |
-| `POST /api/evaluations/regression` | Run a gated evaluation suite |
-| `POST /api/benchmarks/compare` | Compare providers on the same scenario slice |
+| `GET /health/live` | Process liveness |
+| `GET /health/ready` | Database and queue readiness |
+| `GET /api/dashboard` | Observed quality, operations, benchmarks, and suite history |
+| `GET /api/integrations` | Connector configuration and proven health |
+| `POST /api/integrations/{name}/check` | Perform and persist a connection check |
+| `POST /api/runs` / `GET /api/runs/{id}` | Execute a task / read its trace |
+| `POST /api/evaluation-jobs` | Idempotently create regression or benchmark work |
+| `GET /api/evaluation-jobs/{id}` | Read job state |
+| `GET /api/evaluation-jobs/{id}/results` | Read completed results |
+| `POST /api/webhooks/github` | Receive verified PR events |
 
-## Repository map
+## Deploy
 
-```text
-backend/
-  app/agents/       agent contracts, planner, orchestration
-  app/tools/        typed local tool registry
-  app/providers/    OpenAI, Anthropic, Gemini, and mock adapters
-  app/evals/        218 scenarios, rubrics, regression and benchmark runners
-  app/services/     demo seeding and metric aggregation
-  tests/            unit, API, trace, and full-suite checks
-frontend/
-  app/              Next.js App Router shell and design system
-  components/       dashboard, charts, and trace explorer
-.github/workflows/  PR evaluation gate and production build checks
+`render.yaml` provisions the API, worker, PostgreSQL, and Redis. Create a Render Blueprint from the repository, fill every `sync: false` secret/config value, verify `/health/ready`, then point `FRONTEND_ORIGIN` at the final HTTPS frontend origin. The API pre-deploy step runs `alembic upgrade head`.
+
+For Vercel, import the same repository and set the project Root Directory to `frontend`. Configure `NEXT_PUBLIC_API_URL=https://<render-api-host>`, `NEXT_PUBLIC_DEMO_MODE=false`, and `NEXT_PUBLIC_EVAL_PROVIDER` to a configured provider. Build settings are detected from `frontend/vercel.json`. Redeploy after changing any `NEXT_PUBLIC_*` value because it is embedded at build time.
+
+Do not expose PostgreSQL or Redis publicly. Keep Render internal connection strings, restrict allowed frontend origins, and leave GitHub checks disabled until all least-privilege settings are present.
+
+## Verification
+
+```bash
+cd backend
+uv run ruff check app tests
+uv run pytest -q
+ENVIRONMENT=test BASELINE_FIXTURE_CONNECTORS=true uv run python -m app.evals.cli --provider mock --all --baseline 0.90 --threshold 0.01
+uv run alembic upgrade head
+
+cd ../frontend
+npm ci
+npm run lint
+NEXT_PUBLIC_DEMO_MODE=false NEXT_PUBLIC_API_URL=https://api.example.invalid npm run build
 ```
 
-## Design decisions
-
-- **Custom orchestration:** the planner and tool loop are deliberately small and inspectable. Framework abstractions can be introduced after traces establish the actual workflow shapes.
-- **Provider-neutral evidence:** tool observations are collected before model synthesis, so the same evidence packet can be evaluated across providers.
-- **No paid calls in CI:** the deterministic adapter makes PR gates repeatable, fast, and free. Provider benchmarks are explicit opt-in operations.
-- **Pricing is configuration:** per-million-token rates live in environment variables because pricing changes. The included defaults are dated September 2026.
-- **Human review is first-class:** reviews are separate immutable records, preserving the automated score for calibration analysis.
-
+See [docs/architecture.md](docs/architecture.md) for boundaries, state transitions, deployment topology, and source references.
 
 ## License
 

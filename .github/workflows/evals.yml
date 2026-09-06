@@ -28,9 +28,15 @@ jobs:
         run: ruff check app tests
       - name: Unit and integration tests
         run: pytest -q --cov=app --cov-report=term-missing
+      - name: Validate migrations from an empty database
+        env:
+          DATABASE_URL: sqlite:///./ci-migrations.db
+        run: alembic upgrade head
       - name: Run all golden agent evaluations
         env:
+          ENVIRONMENT: test
           DATABASE_URL: sqlite:///./ci-evals.db
+          BASELINE_FIXTURE_CONNECTORS: "true"
         run: python -m app.evals.cli --provider mock --all --baseline 0.90 --threshold 0.01
 
   frontend:
@@ -48,5 +54,21 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
-      - run: npm run build
+      - name: Production-mode build
+        env:
+          NEXT_PUBLIC_API_URL: https://api.example.invalid
+          NEXT_PUBLIC_DEMO_MODE: "false"
+          NEXT_PUBLIC_EVAL_PROVIDER: openai
+        run: npm run build
 
+  deployment-contracts:
+    name: Deployment definitions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Vercel configuration JSON
+        run: python -m json.tool frontend/vercel.json >/dev/null
+      - name: Validate Render Blueprint structure
+        run: ruby -e 'require "yaml"; blueprint = YAML.safe_load_file("render.yaml"); abort "missing services" unless blueprint["services"]&.any?; abort "missing database" unless blueprint["databases"]&.any?'
+      - name: Assert production demo and fixture modes are disabled
+        run: ruby -e 'require "yaml"; services = YAML.safe_load_file("render.yaml")["services"].select { |service| ["web", "worker"].include?(service["type"]) }; services.each { |service| env = service["envVars"].to_h { |item| [item["key"], item["value"]] }; abort "unsafe demo deployment" unless env["DEMO_MODE"] == "false" && env["BASELINE_FIXTURE_CONNECTORS"] == "false" }'

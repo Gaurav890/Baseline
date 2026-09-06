@@ -13,8 +13,7 @@ test:
 	cd backend && pytest -q
 
 evals:
-	cd backend && python -m app.evals.cli --provider mock --all
+	cd backend && ENVIRONMENT=test BASELINE_FIXTURE_CONNECTORS=true python -m app.evals.cli --provider mock --all
 
 build:
 	cd frontend && npm run build
-

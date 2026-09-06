@@ -1,4 +1,4 @@
-import type { DashboardData } from "./types";
+import type { DashboardData, Integration } from "./types";
 
 const now = new Date("2026-09-06T19:42:00.000Z");
 const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000).toISOString();
@@ -161,3 +161,51 @@ export const demoData: DashboardData = {
     },
   ],
 };
+
+export const demoIntegrations: Integration[] = [
+  {
+    id: "demo-sec-edgar",
+    name: "sec_edgar",
+    display_name: "SEC EDGAR",
+    configured: true,
+    health_status: "healthy",
+    provenance: "SYNTHETIC",
+    live: false,
+    last_checked_at: ago(9),
+    last_success_at: ago(9),
+    last_error: null,
+    latency_ms: 184,
+    event_count: 42,
+    metadata: { mode: "demo" },
+  },
+  {
+    id: "demo-github",
+    name: "github",
+    display_name: "GitHub",
+    configured: true,
+    health_status: "healthy",
+    provenance: "SYNTHETIC",
+    live: false,
+    last_checked_at: ago(14),
+    last_success_at: ago(14),
+    last_error: null,
+    latency_ms: 121,
+    event_count: 18,
+    metadata: { mode: "demo" },
+  },
+  {
+    id: "demo-tavily",
+    name: "tavily",
+    display_name: "Tavily Search",
+    configured: false,
+    health_status: "unconfigured",
+    provenance: null,
+    live: false,
+    last_checked_at: null,
+    last_success_at: null,
+    last_error: null,
+    latency_ms: null,
+    event_count: 0,
+    metadata: { mode: "demo" },
+  },
+];

@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "snapshot_version": "public-sources-v1",
+  "retrieved_at": "2026-09-06T10:57:41Z",
+  "provenance": "SNAPSHOT",
+  "sources": [
+    {
+      "key": "sec-apple-submissions",
+      "connector": "sec_edgar",
+      "url": "https://data.sec.gov/submissions/CIK0000320193.json",
+      "content_sha256": "7c67278a0c4009db2cfd62ac23fbdb16d935867ad44fdfde9eaef77837386440",
+      "selected_fields": {
+        "cik": "0000320193",
+        "name": "Apple Inc.",
+        "entity_type": "operating",
+        "sic": "3571",
+        "sic_description": "Electronic Computers",
+        "ticker": "AAPL",
+        "exchange": "Nasdaq",
+        "filer_category": "Large accelerated filer",
+        "latest_accession": "0001140361-26-035636",
+        "latest_filing_date": "2026-09-03",
+        "latest_form": "4"
+      }
+    },
+    {
+      "key": "sec-microsoft-submissions",
+      "connector": "sec_edgar",
+      "url": "https://data.sec.gov/submissions/CIK0000789019.json",
+      "content_sha256": "1aa98e15dc1b22c59389f1c460daa1fc94388a045e609fe1f5c7079e9345a5d2",
+      "selected_fields": {
+        "cik": "0000789019",
+        "name": "MICROSOFT CORP",
+        "entity_type": "operating",
+        "sic": "7372",
+        "sic_description": "Services-Prepackaged Software",
+        "ticker": "MSFT",
+        "exchange": "Nasdaq",
+        "filer_category": "Large accelerated filer",
+        "latest_accession": "0000789019-26-000161",
+        "latest_filing_date": "2026-09-02",
+        "latest_form": "4"
+      }
+    },
+    {
+      "key": "github-octocat-issue-1",
+      "connector": "github",
+      "url": "https://api.github.com/repos/octocat/Hello-World/issues/1",
+      "content_sha256": "a2b7b514e32ca8a8c165da156433b6f00bc85515cb929d6843780869c30502ca",
+      "selected_fields": {
+        "repository": "octocat/Hello-World",
+        "number": 1,
+        "title": "Edited README via GitHub",
+        "state": "closed",
+        "author": "unoju",
+        "created_at": "2011-05-09T19:10:00Z",
+        "closed_at": "2011-05-18T20:00:25Z",
+        "html_url": "https://github.com/octocat/Hello-World/pull/1"
+      }
+    },
+    {
+      "key": "github-flask-issue-1",
+      "connector": "github",
+      "url": "https://api.github.com/repos/pallets/flask/issues/1",
+      "content_sha256": "f203534da17ad8215f840dd40774404d3a6860d4f66bb3802ab6144e18e1e4cf",
+      "selected_fields": {
+        "repository": "pallets/flask",
+        "number": 1,
+        "title": "Implement dotted names for URL endpoints",
+        "state": "closed",
+        "author": "justquick",
+        "created_at": "2010-04-13T03:31:11Z",
+        "closed_at": "2010-04-13T10:53:09Z",
+        "html_url": "https://github.com/pallets/flask/issues/1"
+      }
+    },
+    {
+      "key": "github-fastapi-issue-1",
+      "connector": "github",
+      "url": "https://api.github.com/repositories/160919119/issues/1",
+      "content_sha256": "d8e6dcc6e88067e590c3260dfd741da57ed59117957d9226cc70922586be25c0",
+      "selected_fields": {
+        "repository": "fastapi/fastapi",
+        "number": 1,
+        "title": "Add tests for path endpoints",
+        "state": "closed",
+        "author": "mariacamilagl",
+        "created_at": "2018-12-09T16:25:56Z",
+        "closed_at": "2018-12-09T16:27:47Z",
+        "html_url": "https://github.com/fastapi/fastapi/pull/1"
+      }
+    }
+  ]
+}

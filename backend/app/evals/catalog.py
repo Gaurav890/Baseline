@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -13,6 +15,118 @@ class GoldenScenario:
     expected: dict[str, Any]
     expected_tools: tuple[str, ...]
     tags: tuple[str, ...]
+    fixture_kind: str = "synthetic"
+    blocking: bool = True
+
+
+def _public_snapshot_scenarios() -> list[GoldenScenario]:
+    path = Path(__file__).with_name("snapshots") / "public_sources.v1.json"
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    scenarios: list[GoldenScenario] = []
+    scenario_index = 1
+    for source in snapshot["sources"]:
+        fields = source["selected_fields"]
+        source_context = {
+            "title": source["key"],
+            "url": source["url"],
+            "snippet": json.dumps(fields, sort_keys=True),
+            "connector": source["connector"],
+            "retrieved_at": snapshot["retrieved_at"],
+            "content_hash": source["content_sha256"],
+            "provenance": snapshot["provenance"],
+            "snapshot_version": snapshot["snapshot_version"],
+        }
+        sources = [source_context]
+        if fields.get("html_url"):
+            sources.append(
+                {
+                    "title": f"{source['key']}-web",
+                    "url": fields["html_url"],
+                    "snippet": fields["title"],
+                    "connector": source["connector"],
+                    "retrieved_at": snapshot["retrieved_at"],
+                    "content_hash": source["content_sha256"],
+                    "provenance": snapshot["provenance"],
+                    "snapshot_version": snapshot["snapshot_version"],
+                }
+            )
+
+        if source["connector"] == "sec_edgar":
+            variants = [
+                (
+                    (
+                        "Identify the registrant, CIK, and ticker from this frozen SEC filing "
+                        "snapshot."
+                    ),
+                    {key: fields[key] for key in ("name", "cik", "ticker")},
+                ),
+                (
+                    "Create a sourced report of the SEC industry classification in this snapshot.",
+                    {key: fields[key] for key in ("sic", "sic_description", "filer_category")},
+                ),
+                (
+                    "Summarize the registrant market identifiers from this SEC filing evidence.",
+                    {key: fields[key] for key in ("ticker", "exchange", "entity_type")},
+                ),
+                (
+                    (
+                        "Report the latest filing form, date, and accession in this frozen SEC "
+                        "snapshot."
+                    ),
+                    {
+                        "form": fields["latest_form"],
+                        "filing_date": fields["latest_filing_date"],
+                        "accession": fields["latest_accession"],
+                    },
+                ),
+            ]
+            expected_tools = ("web_search", "document_search")
+        else:
+            variants = [
+                (
+                    (
+                        "Identify the repository, issue number, and title from this frozen GitHub "
+                        "evidence."
+                    ),
+                    {key: fields[key] for key in ("repository", "number", "title")},
+                ),
+                (
+                    "State the issue status and author using only this frozen GitHub evidence.",
+                    {key: fields[key] for key in ("state", "author")},
+                ),
+                (
+                    "Give the creation and closure timestamps from this frozen GitHub evidence.",
+                    {key: fields[key] for key in ("created_at", "closed_at")},
+                ),
+                (
+                    "Return the public issue URL from this frozen GitHub evidence.",
+                    {"html_url": fields["html_url"]},
+                ),
+            ]
+            expected_tools = ("web_search",)
+
+        for task, expected in variants:
+            scenarios.append(
+                GoldenScenario(
+                    id=f"research-{scenario_index:03d}",
+                    category="research",
+                    task=task,
+                    context={"sources": sources, "document": json.dumps(fields, sort_keys=True)},
+                    expected=expected,
+                    expected_tools=expected_tools,
+                    tags=(
+                        "grounding",
+                        "public-source",
+                        "frozen-regression",
+                        "snapshot",
+                        source["connector"],
+                    ),
+                    fixture_kind="frozen_snapshot",
+                    blocking=True,
+                )
+            )
+            scenario_index += 1
+    return scenarios
 
 
 def _research_scenarios() -> list[GoldenScenario]:
@@ -23,8 +137,8 @@ def _research_scenarios() -> list[GoldenScenario]:
         "cloud cost controls",
         "software supply-chain risk",
     ]
-    scenarios: list[GoldenScenario] = []
-    for index in range(55):
+    scenarios: list[GoldenScenario] = _public_snapshot_scenarios()
+    for index in range(len(scenarios), 55):
         topic = topics[index % len(topics)]
         use_document = index % 4 == 0
         noun = "report" if use_document else "brief"
@@ -157,5 +271,24 @@ GOLDEN_SCENARIOS = tuple(
     + _extraction_scenarios()
 )
 SCENARIO_INDEX = {scenario.id: scenario for scenario in GOLDEN_SCENARIOS}
+
+# Live canaries exercise the current external APIs separately from the deterministic PR gate.
+# They are intentionally not members of GOLDEN_SCENARIOS and cannot block a merge.
+LIVE_CANARIES = (
+    {
+        "id": "canary-sec-apple-submissions",
+        "connector": "sec_edgar",
+        "source_url": "https://data.sec.gov/submissions/CIK0000320193.json",
+        "blocking": False,
+        "provenance": "LIVE",
+    },
+    {
+        "id": "canary-github-flask-issue",
+        "connector": "github",
+        "source_url": "https://api.github.com/repos/pallets/flask/issues/1",
+        "blocking": False,
+        "provenance": "LIVE",
+    },
+)
 
 assert len(GOLDEN_SCENARIOS) == 218

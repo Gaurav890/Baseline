@@ -1,6 +1,6 @@
 from collections import Counter
 
-from app.evals.catalog import GOLDEN_SCENARIOS, SCENARIO_INDEX
+from app.evals.catalog import GOLDEN_SCENARIOS, LIVE_CANARIES, SCENARIO_INDEX
 
 
 def test_catalog_contains_exactly_218_unique_scenarios() -> None:
@@ -21,3 +21,25 @@ def test_each_scenario_has_an_oracle_and_expected_tools() -> None:
         assert scenario.expected_tools
         assert scenario.tags
 
+
+def test_public_snapshots_are_versioned_and_blocking() -> None:
+    snapshots = [
+        scenario for scenario in GOLDEN_SCENARIOS if scenario.fixture_kind == "frozen_snapshot"
+    ]
+    assert len(snapshots) == 20
+    for scenario in snapshots:
+        assert scenario.blocking is True
+        assert "frozen-regression" in scenario.tags
+        source = scenario.context["sources"][0]
+        assert source["provenance"] == "SNAPSHOT"
+        assert source["snapshot_version"] == "public-sources-v1"
+        assert len(source["content_hash"]) == 64
+        assert source["url"].startswith(("https://data.sec.gov/", "https://api.github.com/"))
+
+
+def test_live_canaries_are_not_part_of_blocking_catalog() -> None:
+    golden_ids = {scenario.id for scenario in GOLDEN_SCENARIOS}
+    assert LIVE_CANARIES
+    assert all(canary["blocking"] is False for canary in LIVE_CANARIES)
+    assert all(canary["provenance"] == "LIVE" for canary in LIVE_CANARIES)
+    assert golden_ids.isdisjoint(canary["id"] for canary in LIVE_CANARIES)

@@ -8,13 +8,16 @@ version = "0.1.0"
 description = "Evaluation and observability API for reliable AI agents"
 requires-python = ">=3.11"
 dependencies = [
+  "alembic>=1.14,<2",
   "anthropic>=0.40,<1",
+  "cryptography>=44,<51",
   "fastapi>=0.115,<1",
   "google-genai>=1.0,<2",
   "httpx>=0.27,<1",
   "openai>=1.60,<3",
   "psycopg[binary]>=3.2,<4",
   "pydantic>=2.9,<3",
+  "redis>=5.2,<7",
   "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.32,<1",
 ]
@@ -39,4 +42,3 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-
