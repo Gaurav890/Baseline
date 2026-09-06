@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: baseline
+      POSTGRES_USER: baseline
+      POSTGRES_PASSWORD: baseline
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U baseline"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - baseline-data:/var/lib/postgresql/data
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://baseline:baseline@postgres:5432/baseline
+      FRONTEND_ORIGIN: http://localhost:3000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  baseline-data:
+
