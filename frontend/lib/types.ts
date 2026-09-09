@@ -1,11 +1,17 @@
 export type ModelComparison = {
+  experiment_id?: string;
   provider: string;
   model: string;
   quality: number;
+  pass_rate?: number;
   task_completion: number;
   latency_ms: number;
+  latency_p95_ms?: number;
   cost_per_task: number;
   runs: number;
+  baseline_quality?: number | null;
+  quality_delta?: number | null;
+  failure_breakdown?: Record<string, number>;
 };
 
 export type RecentRun = {
@@ -78,7 +84,8 @@ export type DashboardData = {
     commit_sha: string;
     scenario_count: number;
     success_rate: number;
-    previous_success_rate: number;
+    previous_success_rate: number | null;
+    baseline_source: "observed_previous_suite" | "no_baseline" | "supplied" | "legacy_unverified" | "synthetic_demo";
     regression_detected: boolean;
     failure_breakdown: Record<string, number>;
     total_cost_usd: number;
@@ -119,6 +126,22 @@ export type IntegrationsResponse = {
   generated_at: string;
 };
 
+export type GoldenScenario = {
+  id: string;
+  category: "research" | "document" | "support" | "extraction";
+  task: string;
+  expected_tools: string[];
+  tags: string[];
+  fixture_kind: "frozen_snapshot" | "synthetic";
+  blocking: boolean;
+  dataset_version: string;
+};
+
+export type GoldenScenariosResponse = {
+  total: number;
+  items: GoldenScenario[];
+};
+
 export type EvaluationJob = {
   id: string;
   kind: "regression" | "benchmark";
@@ -131,4 +154,177 @@ export type EvaluationJob = {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+};
+
+export type ProviderAvailability = {
+  provider: "mock" | "openai" | "anthropic" | "gemini";
+  model: string;
+  configured: boolean;
+};
+
+export type ExperimentCandidate = {
+  id: string;
+  label: string;
+  provider: string;
+  model: string;
+  status: string;
+  run_count: number;
+  quality: number | null;
+  pass_rate: number | null;
+  task_completion: number | null;
+  answer_correctness: number | null;
+  tool_selection_accuracy: number | null;
+  hallucination_rate: number | null;
+  latency_p50_ms: number | null;
+  latency_p95_ms: number | null;
+  total_cost_usd: number;
+  cost_per_task: number | null;
+  baseline_quality: number | null;
+  quality_delta: number | null;
+  failure_breakdown: Record<string, number>;
+  completed_at: string | null;
+};
+
+export type Experiment = {
+  id: string;
+  name: string;
+  dataset_version: string;
+  scenario_ids: string[];
+  scenario_count: number;
+  repetitions: number;
+  status: "queued" | "running" | "completed" | "failed";
+  baseline_experiment_id: string | null;
+  job_id: string | null;
+  recommendation: {
+    quality_candidate_id?: string;
+    fastest_candidate_id?: string;
+    lowest_cost_candidate_id?: string;
+    summary?: string;
+  } | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  candidates: ExperimentCandidate[];
+};
+
+export type ExperimentFailure = {
+  run_id: string;
+  candidate_id: string;
+  candidate_label: string;
+  provider: string;
+  model: string;
+  scenario_id: string;
+  category: string;
+  task: string;
+  output: string;
+  score: number;
+  failure_classification: string | null;
+  rationale: string;
+  rubric: Record<string, unknown>;
+};
+
+export type LiveCanary = {
+  id: string;
+  canary_id: string;
+  connector: string;
+  status: "passed" | "failed";
+  provenance: Provenance | null;
+  source_url: string | null;
+  latency_ms: number | null;
+  content_hash: string | null;
+  error: string | null;
+  checked_at: string;
+};
+
+export type ReviewQueueItem = {
+  run_id: string;
+  task: string;
+  agent_type: string;
+  provider: string;
+  model: string;
+  status: string;
+  reason: "failed_run" | "quality_signal";
+  created_at: string;
+};
+
+export type ReviewQueueResponse = {
+  total: number;
+  items: ReviewQueueItem[];
+};
+
+export type DatasetVersionSummary = {
+  id: string;
+  dataset_name: string;
+  version: number;
+  status: string;
+  scenario_count: number;
+  source_run_id: string | null;
+  created_at: string;
+};
+
+export type SafetyControl = {
+  name: "Scope" | "Authority" | "Budget" | "Verification" | "Containment" | "Auditability";
+  status: "enforced" | "active" | "partial" | "not_implemented";
+  detail: string;
+};
+
+export type SafetyPolicy = {
+  id: string;
+  agent_type: string;
+  version: number;
+  enabled: boolean;
+  allowed_tools: string[];
+  allow_mutating_tools: boolean;
+  max_tool_calls: number;
+  max_runtime_seconds: number;
+  max_estimated_cost_usd: number;
+  approval_threshold_usd: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SafetyEvent = {
+  id: string;
+  run_id: string | null;
+  policy_id: string | null;
+  category: string;
+  decision: string;
+  action: string;
+  reason: string;
+  input_hash: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+};
+
+export type SafetyCheck = {
+  id: string;
+  category: string;
+  label: string;
+  status: "enforced" | "monitored" | "not_implemented";
+};
+
+export type SafetySnapshot = {
+  generated_at: string;
+  execution_enabled: boolean;
+  summary: {
+    policy_count: number;
+    event_count: number;
+    blocked_count: number;
+    mutating_tools_enabled: number;
+  };
+  controls: SafetyControl[];
+  containment: {
+    https_only: boolean;
+    private_network_blocked: boolean;
+    redirects_blocked: boolean;
+    allowed_domains: string[];
+    max_response_bytes: number;
+    connector_timeout_seconds: number;
+    provider_timeout_seconds: number;
+    isolated_execution_sandbox: boolean;
+    covert_channel_detection: boolean;
+  };
+  policies: SafetyPolicy[];
+  events: SafetyEvent[];
+  checks: SafetyCheck[];
 };

@@ -87,6 +87,7 @@ export const demoData: DashboardData = {
     scenario_count: 218,
     success_rate: 0.887,
     previous_success_rate: 0.912,
+    baseline_source: "synthetic_demo",
     regression_detected: true,
     failure_breakdown: { tool_selection: 18, incorrect_answer: 5, hallucination: 2 },
     total_cost_usd: 6.02,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections import Counter
 
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.agents.runner import AgentRunner
@@ -12,9 +13,31 @@ from app.providers.registry import provider_registry
 from app.schemas import RegressionRequest, RunCreate
 
 
-async def run_regression_suite(request: RegressionRequest, db: Session) -> EvalSuiteRun:
+async def run_regression_suite(
+    request: RegressionRequest,
+    db: Session,
+    *,
+    suite_kind: str = "regression",
+) -> EvalSuiteRun:
     runner = AgentRunner()
     selected = GOLDEN_SCENARIOS[: request.limit]
+    model = request.model or provider_registry.default_model(request.provider)
+    previous_success_rate = request.baseline_success_rate
+    baseline_source = "supplied" if previous_success_rate is not None else "no_baseline"
+    if previous_success_rate is None and suite_kind == "regression":
+        previous = db.scalar(
+            select(EvalSuiteRun)
+            .where(
+                EvalSuiteRun.kind == "regression",
+                EvalSuiteRun.provider == request.provider,
+                EvalSuiteRun.model == model,
+                EvalSuiteRun.scenario_count == len(selected),
+            )
+            .order_by(desc(EvalSuiteRun.created_at))
+            .limit(1)
+        )
+        previous_success_rate = previous.success_rate if previous else None
+        baseline_source = "observed_previous_suite" if previous else "no_baseline"
     failures: Counter[str] = Counter()
     latencies: list[int] = []
     costs: list[float] = []
@@ -44,11 +67,17 @@ async def run_regression_suite(request: RegressionRequest, db: Session) -> EvalS
     suite = EvalSuiteRun(
         commit_sha=os.getenv("GITHUB_SHA", "working-tree")[:64],
         provider=request.provider,
-        model=request.model or provider_registry.default_model(request.provider),
+        model=model,
+        kind=suite_kind,
         scenario_count=len(selected),
         success_rate=round(success_rate, 4),
-        previous_success_rate=request.baseline_success_rate,
-        regression_detected=(request.baseline_success_rate - success_rate) > request.threshold,
+        previous_success_rate=previous_success_rate,
+        baseline_source=baseline_source,
+        regression_detected=(
+            (previous_success_rate - success_rate) > request.threshold
+            if previous_success_rate is not None
+            else False
+        ),
         failure_breakdown=dict(failures),
         total_cost_usd=round(sum(costs), 4),
         p95_latency_ms=ordered_latencies[p95_index] if ordered_latencies else 0,
@@ -68,10 +97,10 @@ async def benchmark_providers(
             RegressionRequest(
                 provider=provider,
                 limit=scenario_limit,
-                baseline_success_rate=0,
                 threshold=0.01,
             ),
             db,
+            suite_kind="benchmark",
         )
         results.append(
             {
@@ -84,4 +113,3 @@ async def benchmark_providers(
             }
         )
     return results
-

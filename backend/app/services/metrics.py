@@ -9,7 +9,17 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.evals.catalog import GOLDEN_SCENARIOS
-from app.models import AgentRun, EvalSuiteRun, Evaluation
+from app.models import (
+    AgentRun,
+    EvalSuiteRun,
+    Evaluation,
+    Experiment,
+    HumanReview,
+)
+
+RECENT_RUN_AGENT_TYPES = ("research", "document", "support", "extraction")
+RECENT_RUNS_PER_AGENT_TYPE = 2
+RECENT_RUN_LIMIT = 8
 
 
 def _average(values: list[float]) -> float:
@@ -22,6 +32,32 @@ def _percentile(values: list[int], percentile: float) -> int:
     ordered = sorted(values)
     index = min(len(ordered) - 1, round((len(ordered) - 1) * percentile))
     return ordered[index]
+
+
+def _representative_recent_runs(runs: list[AgentRun]) -> list[AgentRun]:
+    """Return a recent, balanced sample without representing it as a strict timeline."""
+    selected: list[AgentRun] = []
+    selected_ids: set[str] = set()
+
+    for agent_type in RECENT_RUN_AGENT_TYPES:
+        selected_for_agent_type = 0
+        for run in runs:
+            if run.agent_type != agent_type or run.id in selected_ids:
+                continue
+            selected.append(run)
+            selected_ids.add(run.id)
+            selected_for_agent_type += 1
+            if selected_for_agent_type == RECENT_RUNS_PER_AGENT_TYPE:
+                break
+
+    for run in runs:
+        if len(selected) == RECENT_RUN_LIMIT:
+            break
+        if run.id not in selected_ids:
+            selected.append(run)
+            selected_ids.add(run.id)
+
+    return sorted(selected, key=lambda run: run.created_at, reverse=True)
 
 
 def dashboard_snapshot(db: Session) -> dict[str, Any]:
@@ -40,26 +76,35 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         if evaluation.failure_classification
     )
 
-    by_provider: dict[str, list[tuple[AgentRun, Evaluation]]] = defaultdict(list)
-    for run in runs:
-        if run.evaluations:
-            by_provider[run.provider].append((run, run.evaluations[-1]))
-
-    comparison = []
-    for provider, entries in by_provider.items():
-        comparison.append(
+    latest_experiment = db.scalar(
+        select(Experiment)
+        .options(selectinload(Experiment.candidates))
+        .where(Experiment.status == "completed")
+        .order_by(desc(Experiment.completed_at))
+        .limit(1)
+    )
+    comparison = (
+        [
             {
-                "provider": provider,
-                "model": entries[0][0].model,
-                "quality": _average([evaluation.score for _, evaluation in entries]),
-                "task_completion": _average(
-                    [evaluation.task_completion for _, evaluation in entries]
-                ),
-                "latency_ms": round(mean(run.latency_ms for run, _ in entries)),
-                "cost_per_task": round(mean(run.cost_usd for run, _ in entries), 4),
-                "runs": len(entries),
+                "experiment_id": latest_experiment.id,
+                "provider": candidate.provider,
+                "model": candidate.model,
+                "quality": candidate.quality or 0.0,
+                "pass_rate": candidate.pass_rate or 0.0,
+                "task_completion": candidate.task_completion or 0.0,
+                "latency_ms": candidate.latency_p50_ms or 0,
+                "latency_p95_ms": candidate.latency_p95_ms or 0,
+                "cost_per_task": candidate.cost_per_task or 0.0,
+                "runs": candidate.run_count,
+                "baseline_quality": candidate.baseline_quality,
+                "quality_delta": candidate.quality_delta,
+                "failure_breakdown": candidate.failure_breakdown,
             }
-        )
+            for candidate in latest_experiment.candidates
+        ]
+        if latest_experiment
+        else []
+    )
     comparison.sort(key=lambda row: row["quality"], reverse=True)
 
     daily: dict[str, list[tuple[AgentRun, Evaluation]]] = defaultdict(list)
@@ -76,7 +121,32 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         for day, entries in sorted(daily.items())
     ]
 
-    latest_suite = db.scalar(select(EvalSuiteRun).order_by(desc(EvalSuiteRun.created_at)).limit(1))
+    latest_suite = db.scalar(
+        select(EvalSuiteRun)
+        .where(EvalSuiteRun.kind == "regression")
+        .order_by(desc(EvalSuiteRun.created_at))
+        .limit(1)
+    )
+    deterministic_scenarios = {
+        run.scenario_id
+        for run in runs
+        if run.scenario_id
+        and any(
+            evaluation.evaluator_type == "deterministic+rubric"
+            for evaluation in run.evaluations
+        )
+    }
+    judged_scenarios = {
+        run.scenario_id
+        for run in runs
+        if run.scenario_id
+        and any(
+            evaluation.evaluator_type.startswith("llm_judge:")
+            for evaluation in run.evaluations
+        )
+    }
+    human_review_count = len(db.scalars(select(HumanReview)).all())
+    representative_recent_runs = _representative_recent_runs(runs)
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "quality": {
@@ -113,12 +183,32 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         "evaluation": {
             "scenario_count": len(GOLDEN_SCENARIOS),
             "methods": [
-                {"name": "Deterministic tests", "status": "active", "coverage": 218},
-                {"name": "Golden datasets", "status": "active", "coverage": 218},
-                {"name": "LLM-as-judge", "status": "available", "coverage": 72},
-                {"name": "Rubric scoring", "status": "active", "coverage": 218},
-                {"name": "Human evaluation", "status": "active", "coverage": 34},
-                {"name": "Regression tests", "status": "active", "coverage": 218},
+                {
+                    "name": "Deterministic tests",
+                    "status": "active" if deterministic_scenarios else "not run",
+                    "coverage": len(deterministic_scenarios),
+                },
+                {"name": "Golden datasets", "status": "defined", "coverage": 218},
+                {
+                    "name": "LLM-as-judge",
+                    "status": "active" if judged_scenarios else "not run",
+                    "coverage": len(judged_scenarios),
+                },
+                {
+                    "name": "Rubric scoring",
+                    "status": "active" if deterministic_scenarios else "not run",
+                    "coverage": len(deterministic_scenarios),
+                },
+                {
+                    "name": "Human evaluation",
+                    "status": "active" if human_review_count else "not run",
+                    "coverage": human_review_count,
+                },
+                {
+                    "name": "Regression tests",
+                    "status": "active" if latest_suite else "not run",
+                    "coverage": latest_suite.scenario_count if latest_suite else 0,
+                },
             ],
         },
         "latest_suite": (
@@ -128,6 +218,7 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
                 "scenario_count": latest_suite.scenario_count,
                 "success_rate": latest_suite.success_rate,
                 "previous_success_rate": latest_suite.previous_success_rate,
+                "baseline_source": latest_suite.baseline_source,
                 "regression_detected": latest_suite.regression_detected,
                 "failure_breakdown": latest_suite.failure_breakdown,
                 "total_cost_usd": latest_suite.total_cost_usd,
@@ -153,6 +244,6 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
                 "cost_usd": run.cost_usd,
                 "created_at": run.created_at.isoformat(),
             }
-            for run in runs[:8]
+            for run in representative_recent_runs
         ],
     }

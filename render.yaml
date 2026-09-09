@@ -28,8 +28,16 @@ services:
         value: "false"
       - key: BASELINE_FIXTURE_CONNECTORS
         value: "false"
+      - key: AGENT_EXECUTION_ENABLED
+        value: "true"
+      - key: SAFETY_ADMIN_KEY
+        sync: false
       - key: JOB_BACKEND
         value: redis
+      - key: JOB_MAX_ATTEMPTS
+        value: "3"
+      - key: JOB_LEASE_SECONDS
+        value: "120"
       - key: DATABASE_URL
         fromDatabase:
           name: baseline-db
@@ -45,6 +53,26 @@ services:
         sync: false
       - key: SEC_REQUESTS_PER_SECOND
         value: "4"
+      - key: CONNECTOR_TIMEOUT_SECONDS
+        value: "8"
+      - key: CONNECTOR_MAX_RESPONSE_BYTES
+        value: "2000000"
+      - key: CONNECTOR_MAX_RETRIES
+        value: "2"
+      - key: CONNECTOR_ALLOWED_DOMAINS
+        value: sec.gov,www.sec.gov,data.sec.gov,api.github.com,github.com,api.tavily.com
+      - key: INGEST_API_KEY
+        sync: false
+      - key: ONLINE_EVAL_SAMPLE_RATE
+        value: "0.1"
+      - key: PROVIDER_TIMEOUT_SECONDS
+        value: "45"
+      - key: EXPERIMENT_MAX_CALLS
+        value: "872"
+      - key: EXPERIMENT_MAX_CONCURRENT
+        value: "3"
+      - key: EXPERIMENT_MAX_ESTIMATED_COST_USD
+        value: "25"
       - key: TAVILY_API_KEY
         sync: false
       - key: GITHUB_TOKEN
@@ -58,6 +86,10 @@ services:
       - key: GITHUB_APP_ID
         sync: false
       - key: GITHUB_PRIVATE_KEY
+        sync: false
+      - key: GITHUB_EVALUATION_PROVIDER
+        value: openai
+      - key: GITHUB_EVALUATION_MODEL
         sync: false
       - key: OPENAI_API_KEY
         sync: false
@@ -81,8 +113,16 @@ services:
         value: "false"
       - key: BASELINE_FIXTURE_CONNECTORS
         value: "false"
+      - key: AGENT_EXECUTION_ENABLED
+        value: "true"
+      - key: SAFETY_ADMIN_KEY
+        sync: false
       - key: JOB_BACKEND
         value: redis
+      - key: JOB_MAX_ATTEMPTS
+        value: "3"
+      - key: JOB_LEASE_SECONDS
+        value: "120"
       - key: DATABASE_URL
         fromDatabase:
           name: baseline-db
@@ -98,6 +138,26 @@ services:
         sync: false
       - key: SEC_REQUESTS_PER_SECOND
         value: "4"
+      - key: CONNECTOR_TIMEOUT_SECONDS
+        value: "8"
+      - key: CONNECTOR_MAX_RESPONSE_BYTES
+        value: "2000000"
+      - key: CONNECTOR_MAX_RETRIES
+        value: "2"
+      - key: CONNECTOR_ALLOWED_DOMAINS
+        value: sec.gov,www.sec.gov,data.sec.gov,api.github.com,github.com,api.tavily.com
+      - key: INGEST_API_KEY
+        sync: false
+      - key: ONLINE_EVAL_SAMPLE_RATE
+        value: "0.1"
+      - key: PROVIDER_TIMEOUT_SECONDS
+        value: "45"
+      - key: EXPERIMENT_MAX_CALLS
+        value: "872"
+      - key: EXPERIMENT_MAX_CONCURRENT
+        value: "3"
+      - key: EXPERIMENT_MAX_ESTIMATED_COST_USD
+        value: "25"
       - key: TAVILY_API_KEY
         sync: false
       - key: GITHUB_TOKEN
@@ -111,6 +171,10 @@ services:
       - key: GITHUB_APP_ID
         sync: false
       - key: GITHUB_PRIVATE_KEY
+        sync: false
+      - key: GITHUB_EVALUATION_PROVIDER
+        value: openai
+      - key: GITHUB_EVALUATION_MODEL
         sync: false
       - key: OPENAI_API_KEY
         sync: false

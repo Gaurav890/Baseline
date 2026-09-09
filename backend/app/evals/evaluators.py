@@ -36,9 +36,7 @@ def _value_similarity(actual: Any, expected: Any) -> float:
     if isinstance(expected, dict):
         if not isinstance(actual, dict) or not expected:
             return 0.0
-        matched = sum(
-            _value_similarity(actual.get(key), value) for key, value in expected.items()
-        )
+        matched = sum(_value_similarity(actual.get(key), value) for key, value in expected.items())
         return matched / len(expected)
     if isinstance(expected, list):
         if not isinstance(actual, list):
@@ -55,6 +53,80 @@ def _value_similarity(actual: Any, expected: Any) -> float:
         actual_words = set(re.findall(r"\w+", actual.lower()))
         return len(expected_words & actual_words) / max(1, len(expected_words | actual_words))
     return 1.0 if actual == expected else 0.0
+
+
+_MISSING = object()
+
+
+def _find_key(value: Any, expected_key: str) -> Any:
+    """Find a field in common model response wrappers without changing the answer key."""
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if str(key).lower().replace("_", "") == expected_key.lower().replace("_", ""):
+                return nested
+        for nested in value.values():
+            found = _find_key(nested, expected_key)
+            if found is not _MISSING:
+                return found
+    elif isinstance(value, list):
+        for nested in value:
+            found = _find_key(nested, expected_key)
+            if found is not _MISSING:
+                return found
+    return _MISSING
+
+
+def _flatten_values(value: Any) -> list[Any]:
+    if isinstance(value, dict):
+        return [item for nested in value.values() for item in _flatten_values(nested)]
+    if isinstance(value, list):
+        return [value, *[item for nested in value for item in _flatten_values(nested)]]
+    return [value]
+
+
+def _field_correctness(parsed: Any, expected: dict[str, Any], *, open_ended: bool) -> float:
+    if not expected:
+        return 1.0
+    flattened = _flatten_values(parsed)
+    serialized = json.dumps(parsed, sort_keys=True) if not isinstance(parsed, str) else parsed
+    scores: list[float] = []
+    for key, expected_value in expected.items():
+        actual_value = _find_key(parsed, key)
+        if actual_value is not _MISSING:
+            scores.append(_value_similarity(actual_value, expected_value))
+            continue
+        if expected_value is None:
+            scores.append(1.0)
+            continue
+        if open_ended:
+            alternatives = [
+                _value_similarity(actual, expected_value) for actual in [*flattened, serialized]
+            ]
+            scores.append(max(alternatives, default=0.0))
+        else:
+            scores.append(0.0)
+    return sum(scores) / len(scores)
+
+
+def _answer_correctness(parsed: Any, scenario: GoldenScenario) -> tuple[float, str]:
+    if scenario.category == "extraction":
+        return _value_similarity(parsed, scenario.expected), "strict structured extraction"
+    if scenario.category == "research":
+        return (
+            _field_correctness(parsed, scenario.expected, open_ended=True),
+            "evidence field and semantic coverage",
+        )
+    if scenario.category == "document":
+        return (
+            _field_correctness(parsed, scenario.expected, open_ended=True),
+            "document fact and summary coverage",
+        )
+    if scenario.category == "support":
+        return (
+            _field_correctness(parsed, scenario.expected, open_ended=False),
+            "ticket resolution and escalation fields",
+        )
+    return _value_similarity(parsed, scenario.expected), "generic value match"
 
 
 def _tool_accuracy(actual: list[str], expected: tuple[str, ...]) -> float:
@@ -87,19 +159,21 @@ def evaluate_run(
 ) -> EvaluationResult:
     completion = 0.0 if execution_error or len(output.strip()) < 3 else 1.0
     parsed = _parse_output(output)
-    correctness = _value_similarity(parsed, scenario.expected) if scenario else completion
+    if scenario:
+        correctness, correctness_method = _answer_correctness(parsed, scenario)
+    else:
+        correctness, correctness_method = completion, "task completion fallback"
     tool_accuracy = _tool_accuracy(actual_tools, scenario.expected_tools) if scenario else 1.0
     hallucination = _hallucination_rate(output, scenario)
     score = round(
-        0.30 * completion
-        + 0.40 * correctness
-        + 0.20 * tool_accuracy
-        + 0.10 * (1 - hallucination),
+        0.30 * completion + 0.40 * correctness + 0.20 * tool_accuracy + 0.10 * (1 - hallucination),
         4,
     )
 
     failure: str | None = None
-    if execution_error:
+    if execution_error and execution_error.startswith("safety_policy:"):
+        failure = "policy_violation"
+    elif execution_error:
         failure = "execution_error"
     elif completion < 1:
         failure = "incomplete"
@@ -121,7 +195,11 @@ def evaluate_run(
         failure_classification=failure,
         rubric={
             "task_completion": {"weight": 0.30, "score": completion},
-            "answer_correctness": {"weight": 0.40, "score": round(correctness, 4)},
+            "answer_correctness": {
+                "weight": 0.40,
+                "score": round(correctness, 4),
+                "method": correctness_method,
+            },
             "tool_selection": {"weight": 0.20, "score": round(tool_accuracy, 4)},
             "groundedness": {"weight": 0.10, "score": round(1 - hallucination, 4)},
         },

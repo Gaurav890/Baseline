@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import UTC, datetime
@@ -8,11 +9,22 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.agents.profiles import AGENT_PROFILES, choose_tools
+from app.config import settings
 from app.evals.catalog import SCENARIO_INDEX, GoldenScenario
 from app.evals.evaluators import evaluate_run
 from app.models import AgentRun, Evaluation, TraceSpan
 from app.providers.registry import provider_registry
 from app.schemas import RunCreate
+from app.services.safety import (
+    SafetyPolicyViolation,
+    enforce_plan,
+    enforce_run_start,
+    enforce_runtime,
+    enforce_tool,
+    record_approval_signal,
+    record_safety_event,
+    safety_policy_for,
+)
 from app.tools.registry import ToolRegistry, default_tools
 
 
@@ -23,6 +35,27 @@ def _utcnow() -> datetime:
 class AgentRunner:
     def __init__(self, tools: ToolRegistry = default_tools) -> None:
         self.tools = tools
+
+    @staticmethod
+    def _output_schema(scenario: GoldenScenario | None) -> dict[str, str] | None:
+        if scenario is None:
+            return None
+        return {
+            key: (
+                "null"
+                if value is None
+                else "number"
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+                else "boolean"
+                if isinstance(value, bool)
+                else "array"
+                if isinstance(value, list)
+                else "object"
+                if isinstance(value, dict)
+                else "string"
+            )
+            for key, value in scenario.expected.items()
+        }
 
     @staticmethod
     def _payload_for_tool(
@@ -55,9 +88,21 @@ class AgentRunner:
                 "ticket_id": context.get("ticket_id", "TKT-DEMO"),
                 "customer_tier": context.get("customer_tier", "growth"),
                 "status": context.get("status", "open"),
+                **(
+                    {"snapshot": context["ticket_snapshot"]}
+                    if context.get("ticket_snapshot")
+                    else {}
+                ),
             }
         if name == "knowledge_base_search":
-            return {"issue": context.get("issue", task)}
+            return {
+                "issue": context.get("issue", task),
+                **(
+                    {"snapshot": context["knowledge_snapshot"]}
+                    if context.get("knowledge_snapshot")
+                    else {}
+                ),
+            }
         if name == "policy_check":
             return {"risk": context.get("risk", "low"), "amount": context.get("amount", 0)}
         if name == "extract_fields":
@@ -69,18 +114,28 @@ class AgentRunner:
             return {"record": extracted, "required": context.get("required", [])}
         return context
 
-    async def run(self, request: RunCreate, db: Session) -> AgentRun:
+    async def run(
+        self,
+        request: RunCreate,
+        db: Session,
+        *,
+        experiment_candidate_id: str | None = None,
+        experiment_case_key: str | None = None,
+    ) -> AgentRun:
         profile = AGENT_PROFILES[request.agent_type]
         model = request.model or provider_registry.default_model(request.provider)
         scenario: GoldenScenario | None = (
             SCENARIO_INDEX.get(request.scenario_id) if request.scenario_id else None
         )
+        policy = safety_policy_for(db, request.agent_type)
         run = AgentRun(
             task=request.task,
             agent_type=request.agent_type,
             provider=request.provider,
             model=model,
             scenario_id=request.scenario_id,
+            experiment_candidate_id=experiment_candidate_id,
+            experiment_case_key=experiment_case_key,
         )
         db.add(run)
         db.flush()
@@ -91,7 +146,12 @@ class AgentRunner:
             kind="agent",
             name=profile.name,
             input={"task": request.task, "context_keys": sorted(request.context)},
-            attributes={"provider": request.provider, "model": model},
+            attributes={
+                "provider": request.provider,
+                "model": model,
+                "safety_policy_id": policy.id,
+                "safety_policy_version": policy.version,
+            },
         )
         db.add(root)
         db.flush()
@@ -101,8 +161,20 @@ class AgentRunner:
         execution_error: str | None = None
 
         try:
+            enforce_run_start(
+                db,
+                run_id=run.id,
+                policy=policy,
+                provider=request.provider,
+            )
             planner_started = time.perf_counter()
             planned_tools = choose_tools(request.agent_type, request.task)
+            enforce_plan(
+                db,
+                run_id=run.id,
+                policy=policy,
+                planned_tools=planned_tools,
+            )
             run.planner_output = {
                 "strategy": "plan → observe → synthesize → evaluate",
                 "steps": [
@@ -127,10 +199,28 @@ class AgentRunner:
             )
 
             for tool_name in planned_tools:
+                enforce_runtime(
+                    db,
+                    run_id=run.id,
+                    policy=policy,
+                    run_started=run_started,
+                    action=tool_name,
+                )
                 tool_started_at = _utcnow()
                 tool_started = time.perf_counter()
                 payload = self._payload_for_tool(
                     tool_name, request.task, request.context, observations
+                )
+                if tool_name == "policy_check":
+                    payload["approval_threshold_usd"] = policy.approval_threshold_usd
+                tool = self.tools.get(tool_name)
+                enforce_tool(
+                    db,
+                    run_id=run.id,
+                    policy=policy,
+                    tool=tool,
+                    payload=payload,
+                    call_number=len(actual_tools) + 1,
                 )
                 try:
                     execution = self.tools.execute_with_metadata(tool_name, payload)
@@ -151,11 +241,28 @@ class AgentRunner:
                             attributes={"attempt": 1},
                         )
                     )
+                    record_safety_event(
+                        db,
+                        run_id=run.id,
+                        policy=policy,
+                        category="containment",
+                        decision="tool_error",
+                        action=tool_name,
+                        reason=f"{type(exc).__name__}: {exc}"[:2000],
+                        payload=payload,
+                    )
                     raise
                 result = execution.output
                 duration = max(1, int((time.perf_counter() - tool_started) * 1000))
                 observations.append({"tool": tool_name, "result": result})
                 actual_tools.append(tool_name)
+                record_approval_signal(
+                    db,
+                    run_id=run.id,
+                    policy=policy,
+                    action=tool_name,
+                    output=result,
+                )
                 db.add(
                     TraceSpan(
                         run_id=run.id,
@@ -177,19 +284,52 @@ class AgentRunner:
             prompt_packet: dict[str, Any] = {
                 "task": request.task,
                 "observations": observations,
-                "output_contract": (
-                    "Return a concise, evidence-grounded answer. Prefer JSON for structured tasks."
-                ),
+                "output_contract": {
+                    "format": "json",
+                    "schema": self._output_schema(scenario),
+                    "instructions": (
+                        "Return one valid JSON object only. When a schema is supplied, use those "
+                        "exact top-level keys and preserve the requested value types. Base every "
+                        "claim on the observations; do not invent URLs or facts."
+                    ),
+                },
             }
             if request.provider == "mock" and scenario:
                 prompt_packet["expected"] = scenario.expected
             model_started_at = _utcnow()
             model_started = time.perf_counter()
-            response = await provider_registry.get(request.provider).generate(
-                system=profile.instructions,
-                prompt=json.dumps(prompt_packet, sort_keys=True),
-                model=model,
+            enforce_runtime(
+                db,
+                run_id=run.id,
+                policy=policy,
+                run_started=run_started,
+                action="model_generation",
             )
+            remaining_runtime = max(
+                0.001, policy.max_runtime_seconds - (time.perf_counter() - run_started)
+            )
+            model_timeout = min(settings.provider_timeout_seconds, remaining_runtime)
+            try:
+                response = await asyncio.wait_for(
+                    provider_registry.get(request.provider).generate(
+                        system=profile.instructions,
+                        prompt=json.dumps(prompt_packet, sort_keys=True),
+                        model=model,
+                    ),
+                    timeout=model_timeout,
+                )
+            except TimeoutError as exc:
+                reason = f"Model generation exceeded its {model_timeout:.3f}s deadline"
+                record_safety_event(
+                    db,
+                    run_id=run.id,
+                    policy=policy,
+                    category="budget",
+                    decision="timed_out",
+                    action="model_generation",
+                    reason=reason,
+                )
+                raise SafetyPolicyViolation("budget", reason, decision="timed_out") from exc
             model_duration = max(1, int((time.perf_counter() - model_started) * 1000))
             run.final_output = response.text
             run.input_tokens = response.input_tokens
@@ -197,6 +337,22 @@ class AgentRunner:
             run.cost_usd = provider_registry.cost(
                 request.provider, response.input_tokens, response.output_tokens
             )
+            if run.cost_usd > policy.max_estimated_cost_usd:
+                reason = (
+                    f"Actual provider cost {run.cost_usd:.6f} exceeded the "
+                    f"{policy.max_estimated_cost_usd:.6f} run ceiling"
+                )
+                record_safety_event(
+                    db,
+                    run_id=run.id,
+                    policy=policy,
+                    category="budget",
+                    decision="budget_exceeded",
+                    action="model_generation",
+                    reason=reason,
+                    metadata={"actual_cost_usd": run.cost_usd},
+                )
+                raise SafetyPolicyViolation("budget", reason)
             db.add(
                 TraceSpan(
                     run_id=run.id,
@@ -217,7 +373,11 @@ class AgentRunner:
             )
             run.status = "completed"
         except Exception as exc:  # A failed run is still valuable evaluation evidence.
-            execution_error = str(exc)
+            execution_error = (
+                f"safety_policy:{exc.category}: {exc}"
+                if isinstance(exc, SafetyPolicyViolation)
+                else str(exc)
+            )
             run.status = "failed"
             run.error = execution_error
             run.final_output = ""
@@ -268,7 +428,7 @@ class AgentRunner:
             observation["result"].get("requires_approval", False)
             for observation in observations
             if isinstance(observation.get("result"), dict)
-        )
+        ) or bool(execution_error and execution_error.startswith("safety_policy:authority"))
         root.ended_at = run.completed_at
         root.duration_ms = run.latency_ms
         root.status = "ok" if run.status == "completed" else "error"

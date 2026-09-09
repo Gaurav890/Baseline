@@ -49,12 +49,23 @@ class SourcePacketConnector(BaseConnector):
             )
         data = {"query": query, "results": results, "source_count": len(results)}
         source_urls = tuple(result["url"] for result in results if result["url"])
+        supplied_provenance = {
+            str(source.get("provenance", "")).upper()
+            for source in supplied
+            if isinstance(source, dict)
+        }
+        provenance = (
+            Provenance.SYNTHETIC
+            if supplied_provenance == {Provenance.SYNTHETIC.value}
+            else Provenance.SNAPSHOT
+        )
         return self._result(
             data=data,
             source_url=source_urls[0] if source_urls else None,
             latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
             event_count=len(results),
             source_urls=source_urls,
+            provenance=provenance,
         )
 
     def _perform_health_check(self) -> None:

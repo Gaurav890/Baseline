@@ -15,6 +15,8 @@ def _production_settings(**overrides: object) -> Settings:
         "job_backend": "redis",
         "redis_url": "redis://redis.internal:6379/0",
         "sec_user_agent": "Baseline Reliability ops@example.com",
+        "ingest_api_key": "production-ingestion-key-24-chars",
+        "safety_admin_key": "production-safety-admin-key-24-chars",
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
@@ -33,6 +35,7 @@ def test_safe_production_configuration_is_accepted() -> None:
         ({"job_backend": "inline"}, "JOB_BACKEND must be 'redis'"),
         ({"frontend_origin": "http://baseline.example"}, "must use HTTPS"),
         ({"sec_user_agent": None}, "SEC_USER_AGENT must identify"),
+        ({"safety_admin_key": None}, "SAFETY_ADMIN_KEY must contain"),
     ],
 )
 def test_production_configuration_rejects_unsafe_values(

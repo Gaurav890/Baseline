@@ -159,6 +159,7 @@ def seed_demo_data(db: Session) -> None:
                 scenario_count=218,
                 success_rate=0.912,
                 previous_success_rate=0.904,
+                baseline_source="synthetic_demo",
                 regression_detected=False,
                 failure_breakdown={
                     "tool_selection": 7,
@@ -176,6 +177,7 @@ def seed_demo_data(db: Session) -> None:
                 scenario_count=218,
                 success_rate=0.887,
                 previous_success_rate=0.912,
+                baseline_source="synthetic_demo",
                 regression_detected=True,
                 failure_breakdown={
                     "tool_selection": 18,
@@ -189,4 +191,3 @@ def seed_demo_data(db: Session) -> None:
         ]
     )
     db.commit()
-

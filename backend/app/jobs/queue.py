@@ -20,8 +20,11 @@ class InlineJobQueue:
     name = "inline"
 
     async def enqueue(self, job_id: str) -> None:
-        with SessionLocal() as db:
-            await execute_job(job_id, db)
+        while True:
+            with SessionLocal() as db:
+                job = await execute_job(job_id, db)
+            if job is None or job.status != "queued":
+                return
 
     def ready(self) -> bool:
         return True

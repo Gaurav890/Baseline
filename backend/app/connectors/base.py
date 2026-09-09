@@ -139,6 +139,7 @@ class BaseConnector(ABC):
         event_count: int = 1,
         source_urls: tuple[str, ...] = (),
         api_endpoint: str | None = None,
+        provenance: Provenance | None = None,
     ) -> ConnectorResult:
         retrieved_at = utcnow()
         metadata = ConnectorMetadata(
@@ -147,7 +148,7 @@ class BaseConnector(ABC):
             content_hash=content_hash or canonical_hash(data),
             connector=self.name,
             latency_ms=max(0, latency_ms),
-            provenance=self.provenance,
+            provenance=provenance or self.provenance,
             source_urls=source_urls,
             api_endpoint=api_endpoint,
         )

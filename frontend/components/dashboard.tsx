@@ -1,25 +1,46 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { demoData, demoIntegrations } from "@/lib/demo-data";
 import type {
   DashboardData,
-  EvaluationJob,
+  GoldenScenario,
+  GoldenScenariosResponse,
   Integration,
   IntegrationsResponse,
   RecentRun,
   RunDetail,
 } from "@/lib/types";
 import { Icon } from "./icon";
+import { AgentSafetyPanel } from "./agent-safety-panel";
+import { CanaryPanel } from "./canary-panel";
+import { ExperimentWorkbench } from "./experiment-workbench";
 import { TrendChart } from "./trend-chart";
+import { ProductionLearningPanel } from "./production-learning-panel";
 
 const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
-const evaluationProvider = process.env.NEXT_PUBLIC_EVAL_PROVIDER ?? (demoMode ? "mock" : "openai");
 
 type LoadStatus = "loading" | "ready" | "empty" | "error" | "demo";
 type TraceStatus = "loading" | "ready" | "error" | "demo";
+type ScenarioCategory = GoldenScenario["category"] | "all";
+
+const DATASET_PAGE_SIZE = 12;
+const scenarioCategories: Array<{ value: ScenarioCategory; label: string }> = [
+  { value: "all", label: "All test cases" },
+  { value: "research", label: "Research" },
+  { value: "document", label: "Documents" },
+  { value: "support", label: "Customer support" },
+  { value: "extraction", label: "Data extraction" },
+];
+
+const agentTypeLabels: Record<string, string> = {
+  research: "Research",
+  document: "Documents",
+  support: "Customer support",
+  extraction: "Data extraction",
+};
 
 const formatPercent = (value: number, digits = 1) => `${(value * 100).toFixed(digits)}%`;
 const formatCost = (value: number) => `$${value.toFixed(value < 0.1 ? 3 : 2)}`;
@@ -27,6 +48,7 @@ const formatLatency = (value: number) =>
   value >= 1000 ? `${(value / 1000).toFixed(2)}s` : `${value}ms`;
 const titleCase = (value: string) =>
   value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
+const agentTypeLabel = (value: string) => agentTypeLabels[value] ?? titleCase(value);
 const formatDate = (value: string | null) => {
   if (!value) return "Never";
   const date = new Date(value);
@@ -192,6 +214,125 @@ function DataSources({
   );
 }
 
+function GoldenDatasetBrowser() {
+  const [category, setCategory] = useState<ScenarioCategory>("all");
+  const [offset, setOffset] = useState(0);
+  const [catalog, setCatalog] = useState<GoldenScenariosResponse | null>(null);
+  const [status, setStatus] = useState<LoadStatus>(demoMode ? "demo" : "loading");
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (demoMode) return;
+
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      limit: String(DATASET_PAGE_SIZE),
+      offset: String(offset),
+    });
+    if (category !== "all") params.set("category", category);
+
+    const loadCatalog = async () => {
+      setStatus("loading");
+      try {
+        const response = await fetch(`${apiUrl}/api/scenarios?${params}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Golden dataset unavailable");
+        const payload = (await response.json()) as GoldenScenariosResponse;
+        setCatalog(payload);
+        setStatus(payload.items.length ? "ready" : "empty");
+      } catch {
+        if (controller.signal.aborted) return;
+        setCatalog(null);
+        setStatus("error");
+      }
+    };
+
+    void loadCatalog();
+    return () => controller.abort();
+  }, [category, offset, reloadKey]);
+
+  const total = catalog?.total ?? 0;
+  const currentPage = Math.floor(offset / DATASET_PAGE_SIZE) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / DATASET_PAGE_SIZE));
+
+  const chooseCategory = (value: ScenarioCategory) => {
+    setCategory(value);
+    setOffset(0);
+  };
+
+  return (
+    <section className="panel dataset-browser" id="datasets" aria-labelledby="dataset-browser-title">
+      <div className="panel-head dataset-browser-head">
+        <div>
+          <span className="eyebrow">Test library</span>
+          <h3 id="dataset-browser-title">Golden dataset browser</h3>
+        </div>
+        <span className={`dataset-count ${status}`}>{status === "ready" ? `${total} test cases` : status === "loading" ? "Loading" : "Test library"}</span>
+      </div>
+      <p className="dataset-description">
+        This is the checklist we use to see whether an agent can handle real work reliably. Each row is one test case; the expected answer stays private so the test remains fair.
+      </p>
+      <div className="dataset-explainer">
+        <div><strong>Job</strong><span>What we ask the agent to do.</span></div>
+        <div><strong>Work type</strong><span>The kind of task: research, documents, support, or extraction.</span></div>
+        <div><strong>Information used</strong><span>The tools or sources the agent should consult.</span></div>
+      </div>
+
+      <div className="dataset-filter" aria-label="Filter golden scenarios by category">
+        {scenarioCategories.map((option) => (
+          <button
+            className={category === option.value ? "active" : ""}
+            key={option.value}
+            type="button"
+            aria-pressed={category === option.value}
+            onClick={() => chooseCategory(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      {status === "loading" ? <div className="dataset-state" aria-live="polite">Loading test cases…</div> : null}
+      {status === "demo" ? <div className="dataset-state">Demo mode does not expose the production catalog. Connect the API to browse it.</div> : null}
+      {status === "error" ? (
+        <div className="dataset-state error" role="alert">
+          <span>The Golden Dataset API could not be reached.</span>
+          <button className="text-button" type="button" onClick={() => setReloadKey((value) => value + 1)}>Retry</button>
+        </div>
+      ) : null}
+      {status === "empty" ? <div className="dataset-state">No test cases match this category.</div> : null}
+
+      {status === "ready" && catalog ? (
+        <>
+          <div className="dataset-table" role="table" aria-label="Golden dataset test cases">
+            <div className="dataset-row dataset-header" role="row">
+              <span>Test case</span><span>Job for the agent</span><span>Information it should use</span><span>Topics</span>
+            </div>
+            {catalog.items.map((scenario) => (
+              <div className="dataset-row" role="row" key={scenario.id}>
+                <span className="scenario-id"><code>{scenario.id}</code><em className={scenario.category}>{agentTypeLabel(scenario.category)}</em></span>
+                <span className="scenario-task">{scenario.task}</span>
+                <span className="tool-tags">{scenario.expected_tools.map((tool) => <code key={tool}>{tool}</code>)}</span>
+                <span className="scenario-tags">{scenario.tags.slice(0, 3).map((tag) => <em key={tag}>{tag}</em>)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="dataset-pagination">
+            <span>Showing {offset + 1}–{Math.min(offset + catalog.items.length, total)} of {total} test cases</span>
+            <div>
+              <button className="secondary-button" type="button" disabled={offset === 0} onClick={() => setOffset((value) => Math.max(0, value - DATASET_PAGE_SIZE))}>Previous</button>
+              <strong>Page {currentPage} / {totalPages}</strong>
+              <button className="secondary-button" type="button" disabled={offset + DATASET_PAGE_SIZE >= total} onClick={() => setOffset((value) => value + DATASET_PAGE_SIZE)}>Next</button>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 function RunDrawer({ run, traceStatus, onClose }: { run: RecentRun | RunDetail; traceStatus: TraceStatus; onClose: () => void }) {
   const detail = "spans" in run ? run : null;
   const evaluation = detail?.evaluations.at(-1);
@@ -239,7 +380,6 @@ export function Dashboard() {
   const [integrationStatus, setIntegrationStatus] = useState<LoadStatus>(demoMode ? "demo" : "loading");
   const [integrationError, setIntegrationError] = useState<string | null>(null);
   const [checking, setChecking] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<RecentRun | RunDetail | null>(null);
   const [traceStatus, setTraceStatus] = useState<TraceStatus>(demoMode ? "demo" : "loading");
@@ -301,39 +441,6 @@ export function Dashboard() {
     }
   };
 
-  const runSuite = async () => {
-    setRunning(true);
-    setNotice("Submitting a 218-scenario regression job…");
-    try {
-      const response = await fetch(`${apiUrl}/api/evaluation-jobs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify({ kind: "regression", regression: { provider: evaluationProvider, limit: 218, baseline_success_rate: 0.912 }, metadata: { requested_by: "dashboard" } }),
-      });
-      if (!response.ok) throw new Error("Could not create evaluation job");
-      let job = (await response.json()) as EvaluationJob;
-      setNotice(`Evaluation ${job.status} · ${job.id.slice(0, 12)}`);
-      for (let attempt = 0; attempt < 120 && !["completed", "failed"].includes(job.status); attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const statusResponse = await fetch(`${apiUrl}/api/evaluation-jobs/${job.id}`, { cache: "no-store" });
-        if (!statusResponse.ok) throw new Error("Evaluation status unavailable");
-        job = (await statusResponse.json()) as EvaluationJob;
-        setNotice(`Evaluation ${job.status} · attempt ${job.attempts}`);
-      }
-      if (job.status === "failed") throw new Error(job.error ?? "Evaluation failed");
-      if (job.status !== "completed") throw new Error("Evaluation is still running; check job status later");
-      const result = job.result ?? {};
-      const count = typeof result.scenario_count === "number" ? result.scenario_count : 218;
-      const success = typeof result.success_rate === "number" ? formatPercent(result.success_rate) : "complete";
-      setNotice(`${count} evals complete · ${success}${success === "complete" ? "" : " passed"}`);
-      await loadAll();
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Evaluation job could not be started.");
-    } finally {
-      setRunning(false);
-    }
-  };
-
   const openRun = async (run: RecentRun) => {
     setSelectedRun(run);
     if (demoMode) {
@@ -352,14 +459,6 @@ export function Dashboard() {
     }
   };
 
-  const bestValue = useMemo(() => {
-    if (!data?.model_comparison.length) return { quality: null, latency: null, cost: null };
-    return {
-      quality: Math.max(...data.model_comparison.map((item) => item.quality)),
-      latency: Math.min(...data.model_comparison.map((item) => item.latency_ms)),
-      cost: Math.min(...data.model_comparison.map((item) => item.cost_per_task)),
-    };
-  }, [data]);
   const suite = data?.latest_suite;
   const connectionLabel = dataStatus === "demo" ? "Demo mode" : dataStatus === "ready" || dataStatus === "empty" ? "API connected" : dataStatus === "loading" ? "Connecting" : "API unavailable";
 
@@ -376,6 +475,8 @@ export function Dashboard() {
           <span className="nav-label second">Manage</span>
           <a href="#models"><Icon name="compare" />Model comparison</a>
           <a href="#sources"><Icon name="database" />Data sources</a>
+          <a href="#safety"><Icon name="check" />Agent safety</a>
+          <a href="#review-queue"><Icon name="overview" />Human review</a>
         </nav>
         <div className="sidebar-foot"><div className={`status-line ${dataStatus}`}><span className="status-dot" />{connectionLabel}</div><div className="workspace-switcher"><span className="workspace-avatar">AR</span><div><strong>Agent Reliability</strong><span>{demoMode ? "demo" : "production"}</span></div><span>···</span></div></div>
       </aside>
@@ -383,7 +484,7 @@ export function Dashboard() {
       <main id="top">
         <header className="topbar">
           <div><span className="breadcrumb">WORKSPACE / OVERVIEW</span><h1>Agent Reliability Lab</h1></div>
-          <div className="top-actions"><span className={`environment ${dataStatus}`}><i />{connectionLabel}</span><button className="secondary-button" onClick={() => void loadAll()} disabled={dataStatus === "loading"}><Icon name="refresh" />Refresh</button><button className="primary-button" onClick={() => void runSuite()} disabled={running || dataStatus === "error"}><Icon name="play" />{running ? "Evaluation running…" : "Run evaluation"}</button></div>
+          <div className="top-actions"><span className={`environment ${dataStatus}`}><i />{connectionLabel}</span><button className="secondary-button" onClick={() => void loadAll()} disabled={dataStatus === "loading"}><Icon name="refresh" />Refresh</button><button className="primary-button" onClick={() => document.querySelector("#models")?.scrollIntoView({ behavior: "smooth" })} disabled={dataStatus === "error"}><Icon name="play" />New comparison</button></div>
         </header>
 
         <div className="content">
@@ -392,27 +493,29 @@ export function Dashboard() {
 
           {dataStatus === "loading" || dataStatus === "empty" || dataStatus === "error" ? <DashboardState status={dataStatus} onRetry={() => void loadAll()} /> : null}
           <DataSources integrations={integrations} status={integrationStatus} error={integrationError} checking={checking} onCheck={(integration) => void checkIntegration(integration)} onRetry={() => void loadAll()} />
+          <AgentSafetyPanel apiUrl={apiUrl} demoMode={demoMode} />
+          <CanaryPanel apiUrl={apiUrl} demoMode={demoMode} />
+          <GoldenDatasetBrowser />
+          <ProductionLearningPanel apiUrl={apiUrl} demoMode={demoMode} />
+          <ExperimentWorkbench apiUrl={apiUrl} demoMode={demoMode} onExperimentComplete={loadAll} />
 
           {data && (dataStatus === "ready" || dataStatus === "demo") ? (
             <>
               {dataStatus === "demo" ? <div className="demo-banner"><strong>Explicit demo mode</strong><span>All metrics and integration events on this page are synthetic. Set NEXT_PUBLIC_DEMO_MODE=false to require API evidence.</span></div> : null}
               {suite ? (
-                <section className={`regression-banner ${suite.regression_detected ? "failed" : "passed"}`} id="evaluation"><div className="regression-icon"><Icon name={suite.regression_detected ? "warning" : "check"} size={22} /></div><div className="regression-title"><span>Latest evaluation suite</span><strong>{suite.regression_detected ? "Regression detected" : "Evaluation passed"}</strong><code>{suite.commit_sha}</code></div><div className="suite-stat"><span>Scenarios</span><strong>{suite.scenario_count}</strong></div><div className="suite-stat"><span>Previous</span><strong>{formatPercent(suite.previous_success_rate)}</strong></div><div className="suite-stat emphasis"><span>Current</span><strong>{formatPercent(suite.success_rate)}</strong></div><div className="suite-delta"><span>{formatPercent(suite.success_rate - suite.previous_success_rate)}</span><small>success rate</small></div><button className="text-button" onClick={() => document.querySelector("#traces")?.scrollIntoView({ behavior: "smooth" })}>Inspect runs <Icon name="arrow" /></button></section>
+                <section className={`regression-banner ${suite.regression_detected && suite.baseline_source === "observed_previous_suite" ? "failed" : "passed"}`} id="evaluation"><div className="regression-icon"><Icon name={suite.regression_detected && suite.baseline_source === "observed_previous_suite" ? "warning" : "check"} size={22} /></div><div className="regression-title"><span>Latest evaluation suite</span><strong>{suite.regression_detected && suite.baseline_source === "observed_previous_suite" ? "Observed regression" : "Evaluation complete"}</strong><code>{suite.commit_sha}</code></div><div className="suite-stat"><span>Scenarios</span><strong>{suite.scenario_count}</strong></div><div className="suite-stat"><span>Previous</span><strong>{suite.baseline_source === "observed_previous_suite" && suite.previous_success_rate !== null ? formatPercent(suite.previous_success_rate) : suite.baseline_source === "no_baseline" ? "No baseline" : "Unverified"}</strong></div><div className="suite-stat emphasis"><span>Current</span><strong>{formatPercent(suite.success_rate)}</strong></div><div className="suite-delta"><span>{suite.baseline_source === "observed_previous_suite" && suite.previous_success_rate !== null ? formatPercent(suite.success_rate - suite.previous_success_rate) : "No delta"}</span><small>success rate</small></div><button className="text-button" onClick={() => document.querySelector("#traces")?.scrollIntoView({ behavior: "smooth" })}>Inspect runs <Icon name="arrow" /></button></section>
               ) : <section className="suite-empty" id="evaluation">No completed evaluation suite is available yet.</section>}
 
               <div className="section-heading"><div><span className="eyebrow">Quality signals</span><h3>Observed confidence</h3></div><span className="period">Current dataset</span></div>
               <section className="metrics-grid"><MetricCard eyebrow="Task completion" value={formatPercent(data.quality.task_completion)} detail="Measured across recorded evaluations" /><MetricCard eyebrow="Answer correctness" value={formatPercent(data.quality.answer_correctness)} detail="Evaluator-scored answers" /><MetricCard eyebrow="Tool selection" value={formatPercent(data.quality.tool_selection_accuracy)} detail="Expected tool sequence match" /><MetricCard eyebrow="Hallucination rate" value={formatPercent(data.quality.hallucination_rate)} detail="Unsupported claim rate" /><MetricCard eyebrow="Eval pass rate" value={formatPercent(data.quality.eval_pass_rate)} detail="Passing persisted evaluations" /></section>
 
-              <section className="two-col" id="models">
+              <section className="two-col">
                 <article className="panel trend-panel"><div className="panel-head"><div><span className="eyebrow">Quality over time</span><h3>Evaluation score</h3></div><div className="legend"><i />Pass rate</div></div>{data.trend.length ? <TrendChart data={data.trend} /> : <div className="panel-empty">No trend samples yet.</div>}</article>
                 <article className="panel operations-panel"><div className="panel-head"><div><span className="eyebrow">Operations</span><h3>Recorded runtime</h3></div><span className={`observed-pill ${dataStatus}`}><i />{dataStatus === "demo" ? "Synthetic" : "Observed"}</span></div><div className="ops-grid"><div><Icon name="clock" /><span>p50 latency</span><strong>{formatLatency(data.operations.latency_p50_ms)}</strong><small>p95 {formatLatency(data.operations.latency_p95_ms)}</small></div><div><Icon name="coins" /><span>Cost / task</span><strong>{formatCost(data.operations.cost_per_task)}</strong><small>{formatCost(data.operations.cost_total)} total</small></div><div><Icon name="refresh" /><span>Retries</span><strong>{data.operations.retries}</strong><small>recorded retries</small></div><div><Icon name="arrow" /><span>Escalations</span><strong>{formatPercent(data.operations.escalation_rate)}</strong><small>recorded escalation rate</small></div></div><div className="token-strip"><span>Token volume</span><strong>{(data.operations.tokens / 1_000_000).toFixed(1)}M</strong><div><i style={{ width: `${Math.min(100, data.operations.tokens / 250_000)}%` }} /></div><small>{data.operations.runs.toLocaleString()} total runs</small></div></article>
               </section>
+              <section className="two-col lower-grid"><article className="panel" id="coverage"><div className="panel-head"><div><span className="eyebrow">Evaluation coverage</span><h3>Confidence stack</h3></div><strong className="coverage-total">{data.evaluation.scenario_count}<small>scenarios</small></strong></div><div className="method-list">{data.evaluation.methods.map((method, index) => <div className="method-row" key={method.name}><span className={`method-icon method-${index + 1}`}><Icon name={index === 4 ? "overview" : index === 1 ? "database" : "flask"} /></span><div><strong>{method.name}</strong><span>{method.coverage} scenarios covered</span></div><span className={`method-status ${method.status}`}>{method.status}</span><strong>{method.coverage}</strong></div>)}</div></article><article className="panel failures-panel"><div className="panel-head"><div><span className="eyebrow">Failure intelligence</span><h3>Observed breakdown</h3></div><span className="bad-badge">{Object.values(data.failure_breakdown).reduce((sum, count) => sum + count, 0)} failures</span></div>{Object.keys(data.failure_breakdown).length ? <div className="failure-bars">{Object.entries(data.failure_breakdown).map(([name, count], index) => <div key={name}><span>{titleCase(name)}</span><div><i className={`failure-${index + 1}`} style={{ width: `${Math.min(100, Math.max(5, count * 4.8))}%` }} /></div><strong>{count}</strong></div>)}</div> : <div className="panel-empty">No classified failures in the current dataset.</div>}</article></section>
 
-              <section className="panel model-panel"><div className="panel-head"><div><span className="eyebrow">Quality × cost × latency</span><h3>Model benchmark</h3></div><span className="suite-label">Persisted benchmark results</span></div>{data.model_comparison.length ? <div className="model-table" role="table" aria-label="Model benchmark comparison"><div className="model-row model-header" role="row"><span>Model</span><span>Quality</span><span>Completion</span><span>p50 latency</span><span>Cost / task</span><span>Signal</span></div>{data.model_comparison.map((model) => <div className="model-row" role="row" key={`${model.provider}:${model.model}`}><span className="model-name"><ProviderMark provider={model.provider} /><span><strong>{model.model}</strong><small>{titleCase(model.provider)} · {model.runs} runs</small></span></span><span className="score-cell"><strong>{formatPercent(model.quality)}</strong><i><b style={{ width: formatPercent(model.quality) }} /></i>{model.quality === bestValue.quality ? <em>Best quality</em> : null}</span><span>{formatPercent(model.task_completion)}</span><span className={model.latency_ms === bestValue.latency ? "winner" : ""}>{formatLatency(model.latency_ms)}{model.latency_ms === bestValue.latency ? <em>Fastest</em> : null}</span><span className={model.cost_per_task === bestValue.cost ? "winner" : ""}>{formatCost(model.cost_per_task)}{model.cost_per_task === bestValue.cost ? <em>Lowest</em> : null}</span><span className="recommendation">{model.quality === bestValue.quality ? "Quality" : model.cost_per_task === bestValue.cost ? "Efficiency" : "Measured"}</span></div>)}</div> : <div className="panel-empty">No comparable model benchmark has completed.</div>}</section>
-
-              <section className="two-col lower-grid"><article className="panel" id="datasets"><div className="panel-head"><div><span className="eyebrow">Evaluation coverage</span><h3>Confidence stack</h3></div><strong className="coverage-total">{data.evaluation.scenario_count}<small>scenarios</small></strong></div><div className="method-list">{data.evaluation.methods.map((method, index) => <div className="method-row" key={method.name}><span className={`method-icon method-${index + 1}`}><Icon name={index === 4 ? "overview" : index === 1 ? "database" : "flask"} /></span><div><strong>{method.name}</strong><span>{method.coverage} scenarios covered</span></div><span className={`method-status ${method.status}`}>{method.status}</span><strong>{method.coverage}</strong></div>)}</div></article><article className="panel failures-panel"><div className="panel-head"><div><span className="eyebrow">Failure intelligence</span><h3>Observed breakdown</h3></div><span className="bad-badge">{Object.values(data.failure_breakdown).reduce((sum, count) => sum + count, 0)} failures</span></div>{Object.keys(data.failure_breakdown).length ? <div className="failure-bars">{Object.entries(data.failure_breakdown).map(([name, count], index) => <div key={name}><span>{titleCase(name)}</span><div><i className={`failure-${index + 1}`} style={{ width: `${Math.min(100, Math.max(5, count * 4.8))}%` }} /></div><strong>{count}</strong></div>)}</div> : <div className="panel-empty">No classified failures in the current dataset.</div>}</article></section>
-
-              <section className="panel runs-panel" id="traces"><div className="panel-head"><div><span className="eyebrow">Trace-level observability</span><h3>Recent agent runs</h3></div><span className="suite-label">Select a run for persisted spans</span></div>{data.recent_runs.length ? <div className="runs-table"><div className="run-row run-header"><span>Run / task</span><span>Agent</span><span>Model</span><span>Score</span><span>Latency</span><span>Cost</span><span>Status</span><span /></div>{data.recent_runs.map((run) => <button className="run-row" key={run.id} onClick={() => void openRun(run)}><span><code>{run.id.slice(0, 12)}</code><small>{run.task}</small></span><span className={`agent-chip ${run.agent_type}`}>{titleCase(run.agent_type)}</span><span className="run-model"><ProviderMark provider={run.provider} />{run.model}</span><span className={run.score !== null && run.score < 0.85 ? "score-bad" : "score-good"}>{run.score !== null ? formatPercent(run.score, 0) : "—"}</span><span>{formatLatency(run.latency_ms)}</span><span>{formatCost(run.cost_usd)}</span><span className={run.failure ? "run-failed" : "run-passed"}><i />{run.failure ? titleCase(run.failure) : titleCase(run.status)}</span><span><Icon name="chevron" /></span></button>)}</div> : <div className="panel-empty">No recent runs are available.</div>}</section>
+              <section className="panel runs-panel" id="traces"><div className="panel-head"><div><span className="eyebrow">Trace-level observability</span><h3>Representative agent runs</h3></div><span className="suite-label">Newest two from each work type</span></div><p className="runs-explainer">A balanced sample helps you compare the different kinds of work your agents handle. Select a run to see what happened step by step.</p>{data.recent_runs.length ? <div className="runs-table"><div className="run-row run-header"><span>Run / job</span><span>Work type</span><span>Model</span><span>Score</span><span>Latency</span><span>Cost</span><span>Status</span><span /></div>{data.recent_runs.map((run) => <button className="run-row" key={run.id} onClick={() => void openRun(run)}><span><code>{run.id.slice(0, 12)}</code><small>{run.task}</small></span><span className={`agent-chip ${run.agent_type}`}>{agentTypeLabel(run.agent_type)}</span><span className="run-model"><ProviderMark provider={run.provider} />{run.model}</span><span className={run.score !== null && run.score < 0.85 ? "score-bad" : "score-good"}>{run.score !== null ? formatPercent(run.score, 0) : "—"}</span><span>{formatLatency(run.latency_ms)}</span><span>{formatCost(run.cost_usd)}</span><span className={run.failure ? "run-failed" : "run-passed"}><i />{run.failure ? titleCase(run.failure) : titleCase(run.status)}</span><span><Icon name="chevron" /></span></button>)}</div> : <div className="panel-empty">No recent runs are available.</div>}</section>
 
               <footer><span>Baseline agent reliability platform</span><span>{dataStatus === "demo" ? "Synthetic snapshot" : `API snapshot ${formatDate(data.generated_at)}`}</span></footer>
             </>

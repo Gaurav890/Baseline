@@ -154,6 +154,7 @@ def _research_scenarios() -> list[GoldenScenario]:
                             "title": f"Primary evidence {index + 1}",
                             "url": f"https://evidence.example/research/{index + 1}",
                             "snippet": f"Verified finding about {topic}.",
+                            "provenance": "SYNTHETIC",
                         }
                     ],
                     "document": (
@@ -230,6 +231,28 @@ def _support_scenarios() -> list[GoldenScenario]:
                     "issue": issue,
                     "amount": 750 if gated else 0,
                     "risk": "high" if gated else "low",
+                    "ticket_snapshot": {
+                        "ticket_id": f"TKT-{1000 + index}",
+                        "customer_tier": "enterprise" if gated else "growth",
+                        "status": "open",
+                        "prior_contacts": 1,
+                        "entitlements": ["email_support", "service_credit_review"],
+                    },
+                    "knowledge_snapshot": {
+                        "issue": issue,
+                        "articles": [
+                            {
+                                "id": "KB-104",
+                                "title": "Connection recovery checklist",
+                                "confidence": 0.94,
+                            },
+                            {
+                                "id": "KB-219",
+                                "title": "Escalation and service-credit policy",
+                                "confidence": 0.86,
+                            },
+                        ],
+                    },
                 },
                 expected={
                     "ticket_id": f"TKT-{1000 + index}",

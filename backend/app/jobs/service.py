@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database import SessionLocal
 from app.evals.suite import benchmark_providers, run_regression_suite
 from app.models import EvaluationJob
 from app.schemas import BenchmarkRequest, EvaluationJobCreate, RegressionRequest
@@ -56,6 +59,7 @@ def create_job(
         request=payload,
         status="queued",
         queue_backend=settings.job_backend,
+        max_attempts=settings.job_max_attempts,
     )
     db.add(job)
     try:
@@ -80,6 +84,7 @@ def _suite_result(suite: Any) -> dict[str, Any]:
         "scenario_count": suite.scenario_count,
         "success_rate": suite.success_rate,
         "previous_success_rate": suite.previous_success_rate,
+        "baseline_source": suite.baseline_source,
         "regression_detected": suite.regression_detected,
         "failure_breakdown": suite.failure_breakdown,
         "total_cost_usd": suite.total_cost_usd,
@@ -87,18 +92,51 @@ def _suite_result(suite: Any) -> dict[str, Any]:
     }
 
 
-async def execute_job(job_id: str, db: Session) -> EvaluationJob | None:
+async def _renew_lease(job_id: str, worker_id: str) -> None:
+    interval = max(10, settings.job_lease_seconds // 3)
+    while True:
+        await asyncio.sleep(interval)
+        with SessionLocal() as lease_db:
+            lease_db.execute(
+                update(EvaluationJob)
+                .where(
+                    EvaluationJob.id == job_id,
+                    EvaluationJob.status == "running",
+                    EvaluationJob.lease_owner == worker_id,
+                )
+                .values(
+                    lease_expires_at=datetime.now(UTC)
+                    + timedelta(seconds=settings.job_lease_seconds)
+                )
+            )
+            lease_db.commit()
+
+
+async def execute_job(
+    job_id: str, db: Session, *, worker_id: str = "inline"
+) -> EvaluationJob | None:
     job = db.get(EvaluationJob, job_id)
     if job is None:
         logger.warning("evaluation_job_missing", extra={"job_id": job_id})
         return None
+    now = datetime.now(UTC)
     claimed = db.execute(
         update(EvaluationJob)
-        .where(EvaluationJob.id == job_id, EvaluationJob.status == "queued")
+        .where(
+            EvaluationJob.id == job_id,
+            EvaluationJob.attempts < EvaluationJob.max_attempts,
+            or_(
+                EvaluationJob.status == "queued",
+                (EvaluationJob.status == "running")
+                & (EvaluationJob.lease_expires_at < now),
+            ),
+        )
         .values(
             status="running",
-            started_at=datetime.now(UTC),
+            started_at=now,
             attempts=EvaluationJob.attempts + 1,
+            lease_owner=worker_id,
+            lease_expires_at=now + timedelta(seconds=settings.job_lease_seconds),
         )
         .execution_options(synchronize_session=False)
     )
@@ -114,6 +152,7 @@ async def execute_job(job_id: str, db: Session) -> EvaluationJob | None:
         extra={"job_id": job.id, "job_kind": job.kind, "attempt": job.attempts},
     )
 
+    heartbeat = asyncio.create_task(_renew_lease(job_id, worker_id))
     try:
         parameters = job.request.get("parameters", {})
         if job.kind in {"regression", "pr_evaluation"}:
@@ -141,13 +180,20 @@ async def execute_job(job_id: str, db: Session) -> EvaluationJob | None:
                     logger.exception("github_check_publish_failed", extra={"job_id": job.id})
                     result["github_check"] = {"published": False, "error": str(exc)[:1000]}
         elif job.kind == "benchmark":
-            request = BenchmarkRequest.model_validate(parameters)
-            comparison = await benchmark_providers(
-                providers=request.providers,
-                scenario_limit=request.scenario_limit,
-                db=db,
-            )
-            result = {"scenario_count": request.scenario_limit, "results": comparison}
+            metadata = job.request.get("metadata", {})
+            experiment_id = metadata.get("experiment_id")
+            if experiment_id:
+                from app.experiments.service import execute_experiment
+
+                result = await execute_experiment(str(experiment_id), db)
+            else:
+                request = BenchmarkRequest.model_validate(parameters)
+                comparison = await benchmark_providers(
+                    providers=request.providers,
+                    scenario_limit=request.scenario_limit,
+                    db=db,
+                )
+                result = {"scenario_count": request.scenario_limit, "results": comparison}
         else:
             raise ValueError(f"Unsupported evaluation job kind: {job.kind}")
 
@@ -158,6 +204,8 @@ async def execute_job(job_id: str, db: Session) -> EvaluationJob | None:
         job.result = result
         job.error = None
         job.completed_at = datetime.now(UTC)
+        job.lease_owner = None
+        job.lease_expires_at = None
         db.commit()
         db.refresh(job)
         logger.info("evaluation_job_completed", extra={"job_id": job.id, "job_kind": job.kind})
@@ -166,9 +214,16 @@ async def execute_job(job_id: str, db: Session) -> EvaluationJob | None:
         job = db.get(EvaluationJob, job_id)
         if job is None:
             raise
-        job.status = "failed"
+        retry = job.attempts < job.max_attempts
+        job.status = "queued" if retry else "failed"
         job.error = str(exc)[:5000]
-        job.completed_at = datetime.now(UTC)
+        job.completed_at = None if retry else datetime.now(UTC)
+        job.lease_owner = None
+        job.lease_expires_at = None
         db.commit()
         logger.exception("evaluation_job_failed", extra={"job_id": job.id, "job_kind": job.kind})
+    finally:
+        heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat
     return job

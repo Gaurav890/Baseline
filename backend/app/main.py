@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import re
@@ -21,25 +22,58 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.evals.catalog import GOLDEN_SCENARIOS
 from app.evals.judge import judge_run
+from app.experiments.service import (
+    ExperimentConflictError,
+    create_experiment,
+    experiment_failures,
+)
 from app.jobs.queue import get_job_queue
 from app.jobs.service import IdempotencyConflictError, create_job
 from app.logging_config import configure_logging
-from app.models import AgentRun, EvaluationJob, HumanReview
+from app.models import (
+    AgentRun,
+    DatasetVersion,
+    EvaluationJob,
+    Experiment,
+    HumanReview,
+    SafetyPolicy,
+    UserFeedback,
+)
 from app.providers.registry import provider_registry
 from app.schemas import (
     BenchmarkRequest,
+    DatasetPromotionCreate,
     EvaluationJobCreate,
     EvaluationJobRead,
     EvaluationJobResult,
+    ExperimentCreate,
+    ExperimentRead,
+    FeedbackCreate,
     HumanReviewCreate,
     IntegrationRead,
     JudgeRequest,
+    ProductionTraceCreate,
     RegressionRequest,
     RunCreate,
     RunRead,
+    SafetyEventRead,
+    SafetyPolicyRead,
+    SafetyPolicyUpdate,
 )
 from app.services.integrations import check_integration, sync_integration_catalog
 from app.services.metrics import dashboard_snapshot
+from app.services.production_evidence import (
+    ingest_trace,
+    latest_canaries,
+    promote_failure,
+    review_queue,
+    run_live_canaries,
+)
+from app.services.safety import (
+    ensure_default_safety_policies,
+    safety_snapshot,
+    update_safety_policy,
+)
 from app.services.seed import seed_demo_data
 from app.webhooks.github import parse_pull_request_event, repository_allowed, verify_signature
 
@@ -59,6 +93,7 @@ async def lifespan(_: FastAPI):
         if settings.demo_mode:
             seed_demo_data(db)
         sync_integration_catalog(db)
+        ensure_default_safety_policies(db)
     yield
 
 
@@ -148,6 +183,45 @@ def dashboard(db: DbSession) -> dict[str, Any]:
     return dashboard_snapshot(db)
 
 
+@app.get("/api/safety")
+def safety_control_plane(
+    db: DbSession, event_limit: int = Query(default=25, ge=1, le=100)
+) -> dict[str, Any]:
+    snapshot = safety_snapshot(db, event_limit=event_limit)
+    snapshot["policies"] = [
+        SafetyPolicyRead.model_validate(policy).model_dump(mode="json")
+        for policy in snapshot["policies"]
+    ]
+    snapshot["events"] = [
+        SafetyEventRead.model_validate(event).model_dump(mode="json")
+        for event in snapshot["events"]
+    ]
+    return snapshot
+
+
+@app.patch("/api/safety/policies/{agent_type}", response_model=SafetyPolicyRead)
+def change_safety_policy(
+    agent_type: str,
+    request: SafetyPolicyUpdate,
+    db: DbSession,
+    x_safety_admin_key: Annotated[str | None, Header(alias="X-Safety-Admin-Key")] = None,
+) -> SafetyPolicy:
+    if not settings.safety_admin_key:
+        raise HTTPException(
+            status_code=503, detail="Safety policy administration is not configured"
+        )
+    if not x_safety_admin_key or not hmac.compare_digest(
+        x_safety_admin_key, settings.safety_admin_key
+    ):
+        raise HTTPException(status_code=401, detail="Invalid safety administration credential")
+    if agent_type not in AGENT_PROFILES:
+        raise HTTPException(status_code=404, detail="Agent safety policy not found")
+    try:
+        return update_safety_policy(db, agent_type, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.get("/api/integrations")
 def integrations(db: DbSession) -> dict[str, Any]:
     records = sync_integration_catalog(db)
@@ -204,6 +278,9 @@ def scenarios(
                 "task": scenario.task,
                 "expected_tools": scenario.expected_tools,
                 "tags": scenario.tags,
+                "fixture_kind": scenario.fixture_kind,
+                "blocking": scenario.blocking,
+                "dataset_version": "golden-v1",
             }
             for scenario in filtered[offset : offset + limit]
         ],
@@ -216,9 +293,7 @@ async def create_run(request: RunCreate, db: DbSession) -> AgentRun:
 
 
 @app.get("/api/runs", response_model=list[RunRead])
-def list_runs(
-    db: DbSession, limit: int = Query(default=25, ge=1, le=100)
-) -> list[AgentRun]:
+def list_runs(db: DbSession, limit: int = Query(default=25, ge=1, le=100)) -> list[AgentRun]:
     return list(
         db.scalars(
             select(AgentRun)
@@ -242,9 +317,7 @@ def get_run(run_id: str, db: DbSession) -> AgentRun:
 
 
 @app.post("/api/runs/{run_id}/reviews", status_code=201)
-def create_human_review(
-    run_id: str, review: HumanReviewCreate, db: DbSession
-) -> dict[str, Any]:
+def create_human_review(run_id: str, review: HumanReviewCreate, db: DbSession) -> dict[str, Any]:
     if db.get(AgentRun, run_id) is None:
         raise HTTPException(status_code=404, detail="Run not found")
     record = HumanReview(run_id=run_id, **review.model_dump())
@@ -312,9 +385,7 @@ async def _submit_job(
 async def create_evaluation_job(
     request: EvaluationJobCreate,
     db: DbSession,
-    idempotency_key: Annotated[
-        str | None, Header(alias="Idempotency-Key", max_length=255)
-    ] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=255)] = None,
 ) -> EvaluationJob:
     if request.kind == "pr_evaluation":
         raise HTTPException(
@@ -362,15 +433,11 @@ def get_evaluation_job_results(
     )
 
 
-@app.post(
-    "/api/evaluations/regression", response_model=EvaluationJobRead, status_code=202
-)
+@app.post("/api/evaluations/regression", response_model=EvaluationJobRead, status_code=202)
 async def regression(
     request: RegressionRequest,
     db: DbSession,
-    idempotency_key: Annotated[
-        str | None, Header(alias="Idempotency-Key", max_length=255)
-    ] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=255)] = None,
 ) -> EvaluationJob:
     return await _submit_job(
         EvaluationJobCreate(kind="regression", regression=request), db, idempotency_key
@@ -381,22 +448,200 @@ async def regression(
 async def compare_models(
     request: BenchmarkRequest,
     db: DbSession,
-    idempotency_key: Annotated[
-        str | None, Header(alias="Idempotency-Key", max_length=255)
-    ] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=255)] = None,
 ) -> EvaluationJob:
     return await _submit_job(
         EvaluationJobCreate(kind="benchmark", benchmark=request), db, idempotency_key
     )
 
 
+@app.post("/api/experiments", response_model=ExperimentRead, status_code=202)
+async def create_comparison_experiment(
+    request: ExperimentCreate,
+    db: DbSession,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", max_length=255)] = None,
+) -> Experiment:
+    try:
+        experiment, created = create_experiment(db, request, idempotency_key=idempotency_key)
+    except ExperimentConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    job = db.get(EvaluationJob, experiment.job_id) if experiment.job_id else None
+    if job is None:
+        job, _ = create_job(
+            db,
+            EvaluationJobCreate(
+                kind="benchmark",
+                benchmark=BenchmarkRequest(
+                    scenario_limit=experiment.scenario_count,
+                    providers=[candidate.provider for candidate in experiment.candidates],
+                ),
+                metadata={"experiment_id": experiment.id, "requested_by": "dashboard"},
+            ),
+            idempotency_key=f"experiment-job:{experiment.id}",
+        )
+        experiment.job_id = job.id
+        db.commit()
+    if created or job.status == "queued":
+        try:
+            await get_job_queue().enqueue(job.id)
+        except Exception as exc:
+            logger.exception("experiment_enqueue_failed", extra={"experiment_id": experiment.id})
+            raise HTTPException(status_code=503, detail="Evaluation queue is unavailable") from exc
+    db.expire_all()
+    refreshed = db.scalar(
+        select(Experiment)
+        .options(selectinload(Experiment.candidates))
+        .where(Experiment.id == experiment.id)
+    )
+    assert refreshed is not None
+    return refreshed
+
+
+@app.get("/api/experiments", response_model=list[ExperimentRead])
+def list_experiments(
+    db: DbSession, limit: int = Query(default=20, ge=1, le=100)
+) -> list[Experiment]:
+    return list(
+        db.scalars(
+            select(Experiment)
+            .options(selectinload(Experiment.candidates))
+            .order_by(desc(Experiment.created_at))
+            .limit(limit)
+        ).all()
+    )
+
+
+@app.get("/api/experiments/{experiment_id}", response_model=ExperimentRead)
+def get_experiment(experiment_id: str, db: DbSession) -> Experiment:
+    experiment = db.scalar(
+        select(Experiment)
+        .options(selectinload(Experiment.candidates))
+        .where(Experiment.id == experiment_id)
+    )
+    if experiment is None:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    return experiment
+
+
+@app.get("/api/experiments/{experiment_id}/failures")
+def get_experiment_failures(experiment_id: str, db: DbSession) -> dict[str, Any]:
+    try:
+        items = experiment_failures(db, experiment_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Experiment not found") from None
+    return {"experiment_id": experiment_id, "total": len(items), "items": items}
+
+
+@app.post("/api/traces/ingest", response_model=RunRead, status_code=201)
+def create_ingested_trace(
+    request: ProductionTraceCreate,
+    response: Response,
+    db: DbSession,
+    x_ingest_key: Annotated[str | None, Header(alias="X-Ingest-Key")] = None,
+) -> AgentRun:
+    if not settings.ingest_api_key:
+        raise HTTPException(status_code=503, detail="Production trace ingestion is not configured")
+    if not x_ingest_key or not hmac.compare_digest(x_ingest_key, settings.ingest_api_key):
+        raise HTTPException(status_code=401, detail="Invalid ingestion credential")
+    run, created = ingest_trace(db, request)
+    if not created:
+        response.status_code = 200
+    return run
+
+
+@app.post("/api/runs/{run_id}/feedback", status_code=201)
+def create_user_feedback(run_id: str, feedback: FeedbackCreate, db: DbSession) -> dict[str, Any]:
+    if db.get(AgentRun, run_id) is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    record = UserFeedback(run_id=run_id, **feedback.model_dump())
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return {"id": record.id, "run_id": run_id, "rating": record.rating}
+
+
+@app.get("/api/review-queue")
+def get_review_queue(db: DbSession, limit: int = Query(default=25, ge=1, le=100)) -> dict[str, Any]:
+    items = review_queue(db, limit)
+    return {"total": len(items), "items": items}
+
+
+@app.post("/api/runs/{run_id}/promote", status_code=201)
+def promote_run_to_dataset(
+    run_id: str, request: DatasetPromotionCreate, db: DbSession
+) -> dict[str, Any]:
+    run = db.get(AgentRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    version = promote_failure(db, run, request)
+    return {
+        "id": version.id,
+        "dataset_name": version.dataset_name,
+        "version": version.version,
+        "status": version.status,
+        "scenario_count": len(version.scenarios),
+        "source_run_id": version.source_run_id,
+    }
+
+
+@app.get("/api/dataset-versions")
+def list_dataset_versions(db: DbSession) -> list[dict[str, Any]]:
+    versions = db.scalars(
+        select(DatasetVersion).order_by(desc(DatasetVersion.created_at)).limit(100)
+    ).all()
+    return [
+        {
+            "id": version.id,
+            "dataset_name": version.dataset_name,
+            "version": version.version,
+            "status": version.status,
+            "scenario_count": len(version.scenarios),
+            "source_run_id": version.source_run_id,
+            "created_at": version.created_at.isoformat(),
+        }
+        for version in versions
+    ]
+
+
+def _canary_payload(records: list[Any]) -> dict[str, Any]:
+    return {
+        "blocking": False,
+        "items": [
+            {
+                "id": record.id,
+                "canary_id": record.canary_id,
+                "connector": record.connector,
+                "status": record.status,
+                "provenance": record.provenance,
+                "source_url": record.source_url,
+                "latency_ms": record.latency_ms,
+                "content_hash": record.content_hash,
+                "error": record.error,
+                "checked_at": record.checked_at.isoformat(),
+            }
+            for record in records
+        ],
+    }
+
+
+@app.get("/api/canaries")
+def get_canaries(db: DbSession) -> dict[str, Any]:
+    return _canary_payload(latest_canaries(db))
+
+
+@app.post("/api/canaries/run", status_code=201)
+async def execute_canaries(db: DbSession) -> dict[str, Any]:
+    return _canary_payload(await run_live_canaries(db))
+
+
 @app.post("/api/webhooks/github", status_code=202)
 async def github_webhook(
     request: Request,
     db: DbSession,
-    x_hub_signature_256: Annotated[
-        str | None, Header(alias="X-Hub-Signature-256")
-    ] = None,
+    x_hub_signature_256: Annotated[str | None, Header(alias="X-Hub-Signature-256")] = None,
     x_github_event: Annotated[str | None, Header(alias="X-GitHub-Event")] = None,
     x_github_delivery: Annotated[str | None, Header(alias="X-GitHub-Delivery")] = None,
 ) -> dict[str, Any]:
@@ -435,15 +680,17 @@ async def github_webhook(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if pull_request is None:
         return {"accepted": False, "event": "pull_request", "reason": "action_ignored"}
-    if not repository_allowed(
-        pull_request.repository, settings.github_repository_allowlist
-    ):
+    if not repository_allowed(pull_request.repository, settings.github_repository_allowlist):
         raise HTTPException(status_code=403, detail="Repository is not allowlisted")
 
     job = await _submit_job(
         EvaluationJobCreate(
             kind="pr_evaluation",
-            regression=RegressionRequest(limit=settings.github_evaluation_limit),
+            regression=RegressionRequest(
+                provider=settings.github_evaluation_provider,
+                model=settings.github_evaluation_model,
+                limit=settings.github_evaluation_limit,
+            ),
             metadata=pull_request.metadata(),
         ),
         db,

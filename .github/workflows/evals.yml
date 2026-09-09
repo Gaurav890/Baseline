@@ -58,7 +58,6 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: https://api.example.invalid
           NEXT_PUBLIC_DEMO_MODE: "false"
-          NEXT_PUBLIC_EVAL_PROVIDER: openai
         run: npm run build
 
   deployment-contracts:

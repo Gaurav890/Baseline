@@ -32,6 +32,7 @@ class Tool:
     name: str
     description: str
     handler: ToolHandler
+    mutating: bool = False
 
 
 class ToolRegistry:
@@ -140,12 +141,30 @@ def _fixture(
 
 
 def _ticket_lookup(payload: dict[str, Any], connectors: ConnectorRegistry) -> ToolExecution:
+    snapshot = payload.get("snapshot")
+    if isinstance(snapshot, dict):
+        started = time.perf_counter()
+        return _local_execution(
+            dict(snapshot),
+            connector="support_snapshot",
+            provenance=Provenance.SNAPSHOT,
+            started=started,
+        )
     return _fixture("ticket_lookup", payload, connectors)
 
 
 def _knowledge_base_search(
     payload: dict[str, Any], connectors: ConnectorRegistry
 ) -> ToolExecution:
+    snapshot = payload.get("snapshot")
+    if isinstance(snapshot, dict):
+        started = time.perf_counter()
+        return _local_execution(
+            dict(snapshot),
+            connector="support_snapshot",
+            provenance=Provenance.SNAPSHOT,
+            started=started,
+        )
     return _fixture("knowledge_base_search", payload, connectors)
 
 
@@ -196,7 +215,8 @@ def _policy_check(payload: dict[str, Any], _: ConnectorRegistry) -> ToolExecutio
     started = time.perf_counter()
     risk = str(payload.get("risk", "low"))
     amount = float(payload.get("amount", 0) or 0)
-    requires_approval = risk == "high" or amount > 500
+    approval_threshold = float(payload.get("approval_threshold_usd", 500) or 0)
+    requires_approval = risk == "high" or amount > approval_threshold
     output = {
         "allowed": not requires_approval,
         "requires_approval": requires_approval,
