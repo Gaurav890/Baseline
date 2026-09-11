@@ -5,7 +5,15 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-AgentType = Literal["research", "document", "support", "extraction"]
+AgentType = Literal[
+    "research",
+    "document",
+    "support",
+    "extraction",
+    "due_diligence",
+    "release_risk",
+    "incident_response",
+]
 ProviderType = Literal["mock", "openai", "anthropic", "gemini"]
 
 

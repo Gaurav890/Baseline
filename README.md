@@ -49,6 +49,9 @@ For deterministic connector fixtures in tests only, set both `ENVIRONMENT=test` 
 - Model experiment: two to four models run the exact same immutable scenario IDs. The comparison is one controlled cohort, not an aggregate of unrelated history.
 - Baseline: the most recent completed experiment with the same dataset version and exact scenario IDs. A first run honestly shows “No baseline.”
 - Live sources: the sources marked as LIVE are those successfully verified against real connectors.
+- Workflow Lab: six non-blocking, multi-step examples that show how three complex agents gather
+  evidence, apply risk and authority rules, and return typed business decisions. They are kept
+  separate from the release gate on purpose.
 
 ## Connectors and provenance
 
@@ -83,6 +86,26 @@ ENVIRONMENT=test BASELINE_FIXTURE_CONNECTORS=true uv run python -m app.evals.cli
 
 Twenty of the 218 blocking scenarios are frozen, versioned snapshots derived from primary SEC and GitHub API payloads. Their retrieval timestamp, source URL, selected fields, and full-response hash are checked in at `backend/app/evals/snapshots/public_sources.v1.json`. Live SEC/GitHub canaries are defined separately, do not belong to the golden catalog, and never block CI.
 
+## Complex workflow showcase
+
+The dashboard's **Workflow Lab** presents three additional production-shaped agents:
+
+- **Company Due Diligence Analyst** combines SEC identity evidence, approved web signals, a
+  deterministic risk rubric, and a human-approval gate.
+- **Release Risk Investigator** reviews bounded GitHub issue evidence and external signals before
+  recommending proceed, review, or hold. It has no repository write tool.
+- **Incident Response Coordinator** correlates a supplied incident record with GitHub evidence,
+  prioritizes containment, and stops at the approval boundary rather than pretending to execute it.
+
+Their six `workflow-showcase-v1` cases reuse the versioned public SEC/GitHub snapshots and label
+training-only business signals as `SYNTHETIC`. They are deterministic with the mock provider and
+can use live SEC, GitHub, or Tavily connectors when a caller supplies live context. They remain
+`blocking=false`, so expanding the portfolio does not silently dilute the fixed 218-case gate.
+
+Inspect the public contracts at `GET /api/workflows`. Execute a showcase case through the existing
+`POST /api/runs` contract with its `agent_type`, task, context, and `scenario_id`; the resulting trace
+contains four tool spans plus planner, model, evaluator, provenance, policy version, cost, and timing.
+
 ## Controlled model comparisons
 
 The dashboard’s **New comparison** action opens the persisted experiment builder. Configure at least two provider keys, choose 20, 60, or all 218 cases, and review the call count before starting. A 20-case cohort is category-balanced: five research, five document, five support, and five extraction cases. Every candidate receives the same ordered IDs and each `AgentRun` retains its candidate link.
@@ -110,7 +133,7 @@ The dashboard’s live-canary section calls `POST /api/canaries/run` on demand a
 
 ## Agent safety control plane
 
-The dashboard’s **Agent safety** section separates six concerns: scope, authority, budget, verification, containment, and auditability. Four persisted agent policies enforce the tool allowlist, mutating-tool permission, maximum tool calls, wall-clock deadline, preflight model-cost ceiling, and approval threshold for each work type. The runner attaches the policy ID/version to the root trace and records every plan/tool decision as a `SafetyEvent`; raw policy inputs are represented by a SHA-256 hash rather than duplicated into the decision ledger.
+The dashboard’s **Agent safety** section separates six concerns: scope, authority, budget, verification, containment, and auditability. Seven persisted agent policies enforce the tool allowlist, mutating-tool permission, maximum tool calls, wall-clock deadline, preflight model-cost ceiling, and approval threshold for each work type. The runner attaches the policy ID/version to the root trace and records every plan/tool decision as a `SafetyEvent`; raw policy inputs are represented by a SHA-256 hash rather than duplicated into the decision ledger.
 
 Set `AGENT_EXECUTION_ENABLED=false` to stop new agent work throughout an API/worker environment. Safety policy administration is machine-to-machine and requires `X-Safety-Admin-Key`; never put `SAFETY_ADMIN_KEY` in a `NEXT_PUBLIC_*` variable.
 
@@ -146,6 +169,7 @@ The PR result compares the configured provider/model against the latest persiste
 | `GET /health/live` | Process liveness |
 | `GET /health/ready` | Database and queue readiness |
 | `GET /api/dashboard` | Observed quality, operations, benchmarks, and suite history |
+| `GET /api/agents` / `GET /api/workflows` | Agent contracts and non-blocking complex workflow catalog |
 | `GET /api/safety` | Active agent contracts, containment configuration, gaps, and decision events |
 | `PATCH /api/safety/policies/{agent_type}` | Admin-key-protected safety policy update |
 | `GET /api/integrations` | Connector configuration and proven health |

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models import AgentRun
+from app.models import AgentRun, Evaluation
 from app.services.metrics import dashboard_snapshot
 
 
@@ -53,10 +53,49 @@ def test_dashboard_recent_runs_represent_each_agent_type() -> None:
         db.commit()
         snapshot = dashboard_snapshot(db)
 
-    assert len(snapshot["recent_runs"]) == 8
+    assert len(snapshot["recent_runs"]) == 10
     assert Counter(run["agent_type"] for run in snapshot["recent_runs"]) == {
-        "research": 2,
-        "document": 2,
+        "research": 3,
+        "document": 3,
         "support": 2,
         "extraction": 2,
     }
+
+
+def test_showcase_runs_do_not_inflate_golden_coverage() -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        run = AgentRun(
+            task="Due diligence",
+            agent_type="due_diligence",
+            provider="mock",
+            model="mock",
+            status="completed",
+            scenario_id="due-diligence-apple-001",
+        )
+        run.evaluations.append(
+            Evaluation(
+                evaluator_type="deterministic+rubric",
+                score=1,
+                passed=True,
+                task_completion=1,
+                answer_correctness=1,
+                tool_selection_accuracy=1,
+                hallucination_rate=0,
+                rubric={},
+                rationale="Passed",
+            )
+        )
+        db.add(run)
+        db.commit()
+        snapshot = dashboard_snapshot(db)
+
+    methods = {method["name"]: method for method in snapshot["evaluation"]["methods"]}
+    assert methods["Deterministic tests"]["coverage"] == 0
+    assert methods["Golden datasets"]["coverage"] == 218
+    assert methods["Workflow showcase"]["coverage"] == 1

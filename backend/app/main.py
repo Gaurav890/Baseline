@@ -22,6 +22,7 @@ from app.config import settings
 from app.database import Base, SessionLocal, engine, get_db
 from app.evals.catalog import GOLDEN_SCENARIOS
 from app.evals.judge import judge_run
+from app.evals.workflows import SHOWCASE_SCENARIOS, WORKFLOW_DATASET_VERSION
 from app.experiments.service import (
     ExperimentConflictError,
     create_experiment,
@@ -251,10 +252,79 @@ def agents() -> dict[str, Any]:
                 "description": profile.description,
                 "tools": list(profile.tools),
                 "accent": profile.accent,
+                "complexity": profile.complexity,
+                "business_value": profile.business_value,
+                "example_task": profile.example_task,
+                "workflow": [
+                    {"name": name, "description": description}
+                    for name, description in profile.workflow
+                ],
+                "output_fields": list(profile.output_fields),
             }
             for profile in AGENT_PROFILES.values()
         ],
         "providers": provider_registry.availability(),
+    }
+
+
+@app.get("/api/workflows")
+def workflows() -> dict[str, Any]:
+    complex_agent_ids = {scenario.category for scenario in SHOWCASE_SCENARIOS}
+    return {
+        "dataset_version": WORKFLOW_DATASET_VERSION,
+        "blocking": False,
+        "release_gate_scenario_count": len(GOLDEN_SCENARIOS),
+        "summary": (
+            "Complex, multi-step examples for demonstration and exploratory evaluation. "
+            "They do not silently change the frozen release gate."
+        ),
+        "agents": [
+            {
+                "id": profile.id,
+                "name": profile.name,
+                "description": profile.description,
+                "complexity": profile.complexity,
+                "business_value": profile.business_value,
+                "example_task": profile.example_task,
+                "tools": list(profile.tools),
+                "workflow": [
+                    {"name": name, "description": description}
+                    for name, description in profile.workflow
+                ],
+                "output_fields": list(profile.output_fields),
+                "scenario_count": sum(
+                    scenario.category == profile.id for scenario in SHOWCASE_SCENARIOS
+                ),
+            }
+            for profile in AGENT_PROFILES.values()
+            if profile.id in complex_agent_ids
+        ],
+        "scenarios": [
+            {
+                "id": scenario.id,
+                "agent_type": scenario.category,
+                "task": scenario.task,
+                "expected_tools": list(scenario.expected_tools),
+                "output_fields": list(scenario.expected),
+                "tags": list(scenario.tags),
+                "fixture_kind": scenario.fixture_kind,
+                "blocking": scenario.blocking,
+                "provenance": sorted(
+                    {
+                        str(source.get("provenance", "UNVERIFIED")).upper()
+                        for source in scenario.context.get("sources", [])
+                        if isinstance(source, dict)
+                    }
+                    | {str(scenario.context.get("incident_provenance", "")).upper()} - {""}
+                ),
+                "source_urls": [
+                    str(source["url"])
+                    for source in scenario.context.get("sources", [])
+                    if isinstance(source, dict) and source.get("url")
+                ],
+            }
+            for scenario in SHOWCASE_SCENARIOS
+        ],
     }
 
 

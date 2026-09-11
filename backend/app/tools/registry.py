@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.connectors import (
+    ConnectorError,
     ConnectorMetadata,
     ConnectorNotConfigured,
     ConnectorRegistry,
@@ -99,6 +100,167 @@ def _web_search(payload: dict[str, Any], connectors: ConnectorRegistry) -> ToolE
     return ToolExecution(output=result.data, metadata=result.metadata)
 
 
+def _sec_company_lookup(payload: dict[str, Any], connectors: ConnectorRegistry) -> ToolExecution:
+    snapshot = payload.get("snapshot")
+    if isinstance(snapshot, dict):
+        started = time.perf_counter()
+        evidence = snapshot.get("data")
+        if not isinstance(evidence, dict):
+            raise ConnectorError("SEC snapshot data must be an object")
+        source_url = str(snapshot.get("source_url", "")).strip()
+        # The source-packet connector validates that frozen evidence still points
+        # at a credential-free HTTPS origin and cannot be mislabeled as LIVE.
+        validated = connectors.get("source_packet").execute(
+            {
+                "query": str(payload.get("query", "SEC company lookup")),
+                "sources": [
+                    {
+                        "title": str(snapshot.get("title", "SEC filing snapshot")),
+                        "url": source_url,
+                        "snippet": json.dumps(evidence, sort_keys=True),
+                        "provenance": "SNAPSHOT",
+                    }
+                ],
+            }
+        )
+        output = {
+            "operation": str(payload.get("operation", "submissions")),
+            "cik": str(evidence.get("cik", payload.get("cik", ""))),
+            "company": evidence.get("name") or evidence.get("company"),
+            "data": evidence,
+        }
+        return ToolExecution(
+            output=output,
+            metadata=ConnectorMetadata(
+                source_url=validated.metadata.source_url,
+                source_urls=validated.metadata.source_urls,
+                api_endpoint=validated.metadata.source_url,
+                retrieved_at=validated.metadata.retrieved_at,
+                content_hash=canonical_hash(evidence),
+                connector="sec_edgar_snapshot",
+                latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                provenance=Provenance.SNAPSHOT,
+            ),
+        )
+    result = connectors.get("sec_edgar").execute(payload)
+    return ToolExecution(output=result.data, metadata=result.metadata)
+
+
+def _github_issue_lookup(payload: dict[str, Any], connectors: ConnectorRegistry) -> ToolExecution:
+    snapshot = payload.get("snapshot")
+    if isinstance(snapshot, dict):
+        started = time.perf_counter()
+        evidence = snapshot.get("data")
+        if not isinstance(evidence, dict):
+            raise ConnectorError("GitHub snapshot data must be an object")
+        source_url = str(snapshot.get("source_url", "")).strip()
+        validated = connectors.get("source_packet").execute(
+            {
+                "query": str(payload.get("query", "GitHub issue lookup")),
+                "sources": [
+                    {
+                        "title": str(snapshot.get("title", "GitHub issue snapshot")),
+                        "url": source_url,
+                        "snippet": json.dumps(evidence, sort_keys=True),
+                        "provenance": "SNAPSHOT",
+                    }
+                ],
+            }
+        )
+        issue = {
+            "number": evidence.get("number"),
+            "title": evidence.get("title"),
+            "state": evidence.get("state"),
+            "url": evidence.get("html_url") or source_url,
+            "created_at": evidence.get("created_at"),
+            "updated_at": evidence.get("updated_at"),
+            "closed_at": evidence.get("closed_at"),
+        }
+        output = {
+            "repository": evidence.get("repository") or payload.get("repository"),
+            "operation": "issue",
+            "issues": [issue],
+            "source_count": 1,
+            "authenticated": False,
+        }
+        return ToolExecution(
+            output=output,
+            metadata=ConnectorMetadata(
+                source_url=validated.metadata.source_url,
+                source_urls=validated.metadata.source_urls,
+                api_endpoint=validated.metadata.source_url,
+                retrieved_at=validated.metadata.retrieved_at,
+                content_hash=canonical_hash(evidence),
+                connector="github_snapshot",
+                latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                provenance=Provenance.SNAPSHOT,
+            ),
+        )
+    result = connectors.get("github").execute(payload)
+    return ToolExecution(output=result.data, metadata=result.metadata)
+
+
+def _web_intelligence(payload: dict[str, Any], connectors: ConnectorRegistry) -> ToolExecution:
+    if payload.get("sources"):
+        result = connectors.get("source_packet").execute(payload)
+    else:
+        result = connectors.get("tavily").execute(payload)
+    return ToolExecution(output=result.data, metadata=result.metadata)
+
+
+def _incident_context(payload: dict[str, Any], _: ConnectorRegistry) -> ToolExecution:
+    started = time.perf_counter()
+    snapshot = payload.get("snapshot")
+    if not isinstance(snapshot, dict) or not snapshot:
+        raise ConnectorError("Incident response requires a supplied incident snapshot")
+    provenance = (
+        Provenance.SYNTHETIC
+        if str(payload.get("provenance", "SNAPSHOT")).upper() == "SYNTHETIC"
+        else Provenance.SNAPSHOT
+    )
+    return _local_execution(
+        dict(snapshot),
+        connector="incident_snapshot",
+        provenance=provenance,
+        started=started,
+    )
+
+
+def _risk_assessment(payload: dict[str, Any], _: ConnectorRegistry) -> ToolExecution:
+    started = time.perf_counter()
+    raw_factors = payload.get("risk_factors", [])
+    factors = [item for item in raw_factors if isinstance(item, dict)]
+    weights = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+    normalized = [
+        {
+            "name": str(item.get("name", "Unspecified risk")),
+            "severity": str(item.get("severity", "medium")).lower(),
+        }
+        for item in factors
+    ]
+    score = max((weights.get(item["severity"], 2) for item in normalized), default=1)
+    risk_level = {1: "low", 2: "medium", 3: "high", 4: "critical"}[score]
+    evidence_count = sum(
+        max(1, int(observation.get("result", {}).get("source_count", 1)))
+        for observation in payload.get("observations", [])
+        if isinstance(observation, dict) and isinstance(observation.get("result"), dict)
+    )
+    output = {
+        "risk_level": risk_level,
+        "risk_score": score,
+        "recommendation": "hold" if score >= 3 else "review" if score == 2 else "proceed",
+        "factors": normalized,
+        "evidence_items_considered": evidence_count,
+        "method": "deterministic severity rubric v1",
+    }
+    return _local_execution(
+        output,
+        connector="risk_rubric_v1",
+        provenance=Provenance.SYNTHETIC,
+        started=started,
+    )
+
+
 def _document_search(payload: dict[str, Any], connectors: ConnectorRegistry) -> ToolExecution:
     started = time.perf_counter()
     document = str(payload.get("document", ""))
@@ -153,9 +315,7 @@ def _ticket_lookup(payload: dict[str, Any], connectors: ConnectorRegistry) -> To
     return _fixture("ticket_lookup", payload, connectors)
 
 
-def _knowledge_base_search(
-    payload: dict[str, Any], connectors: ConnectorRegistry
-) -> ToolExecution:
+def _knowledge_base_search(payload: dict[str, Any], connectors: ConnectorRegistry) -> ToolExecution:
     snapshot = payload.get("snapshot")
     if isinstance(snapshot, dict):
         started = time.perf_counter()
@@ -216,7 +376,7 @@ def _policy_check(payload: dict[str, Any], _: ConnectorRegistry) -> ToolExecutio
     risk = str(payload.get("risk", "low"))
     amount = float(payload.get("amount", 0) or 0)
     approval_threshold = float(payload.get("approval_threshold_usd", 500) or 0)
-    requires_approval = risk == "high" or amount > approval_threshold
+    requires_approval = risk in {"high", "critical"} or amount > approval_threshold
     output = {
         "allowed": not requires_approval,
         "requires_approval": requires_approval,
@@ -258,6 +418,31 @@ for tool in [
         "policy_check",
         "Check whether an action is allowed or needs human approval.",
         _policy_check,
+    ),
+    Tool(
+        "sec_company_lookup",
+        "Retrieve a public SEC company record or its versioned frozen snapshot.",
+        _sec_company_lookup,
+    ),
+    Tool(
+        "github_issue_lookup",
+        "Retrieve bounded public GitHub issue evidence or its versioned frozen snapshot.",
+        _github_issue_lookup,
+    ),
+    Tool(
+        "web_intelligence",
+        "Search Tavily when configured or inspect an explicitly supplied evidence packet.",
+        _web_intelligence,
+    ),
+    Tool(
+        "incident_context",
+        "Load the bounded incident record supplied to the response workflow.",
+        _incident_context,
+    ),
+    Tool(
+        "risk_assessment",
+        "Apply the versioned deterministic severity rubric to collected evidence.",
+        _risk_assessment,
     ),
 ]:
     default_tools.register(tool)

@@ -12,6 +12,7 @@ from app.agents.profiles import AGENT_PROFILES, choose_tools
 from app.config import settings
 from app.evals.catalog import SCENARIO_INDEX, GoldenScenario
 from app.evals.evaluators import evaluate_run
+from app.evals.workflows import SHOWCASE_SCENARIO_INDEX
 from app.models import AgentRun, Evaluation, TraceSpan
 from app.providers.registry import provider_registry
 from app.schemas import RunCreate
@@ -104,7 +105,18 @@ class AgentRunner:
                 ),
             }
         if name == "policy_check":
-            return {"risk": context.get("risk", "low"), "amount": context.get("amount", 0)}
+            assessment = next(
+                (
+                    item["result"]
+                    for item in reversed(observations)
+                    if item["tool"] == "risk_assessment"
+                ),
+                {},
+            )
+            return {
+                "risk": assessment.get("risk_level", context.get("risk", "low")),
+                "amount": context.get("amount", 0),
+            }
         if name == "extract_fields":
             return {"text": context.get("text") or context.get("document") or task}
         if name == "validate_schema":
@@ -112,6 +124,43 @@ class AgentRunner:
                 (item["result"] for item in observations if item["tool"] == "extract_fields"), {}
             )
             return {"record": extracted, "required": context.get("required", [])}
+        if name == "sec_company_lookup":
+            return {
+                "query": task,
+                "cik": context.get("cik", ""),
+                "operation": context.get("sec_operation", "submissions"),
+                **({"snapshot": context["sec_snapshot"]} if context.get("sec_snapshot") else {}),
+            }
+        if name == "github_issue_lookup":
+            return {
+                "query": task,
+                "repository": context.get("repository", ""),
+                "operation": context.get("github_operation", "issue"),
+                "issue_number": context.get("issue_number", 1),
+                "max_results": context.get("max_results", 10),
+                "state": context.get("state", "open"),
+                **(
+                    {"snapshot": context["github_snapshot"]}
+                    if context.get("github_snapshot")
+                    else {}
+                ),
+            }
+        if name == "web_intelligence":
+            return {
+                "query": context.get("web_query", task),
+                "max_results": context.get("max_results", 5),
+                **({"sources": context["web_sources"]} if context.get("web_sources") else {}),
+            }
+        if name == "incident_context":
+            return {
+                "snapshot": context.get("incident", {}),
+                "provenance": context.get("incident_provenance", "SNAPSHOT"),
+            }
+        if name == "risk_assessment":
+            return {
+                "risk_factors": context.get("risk_factors", []),
+                "observations": [dict(observation) for observation in observations],
+            }
         return context
 
     async def run(
@@ -125,11 +174,15 @@ class AgentRunner:
         profile = AGENT_PROFILES[request.agent_type]
         model = request.model or provider_registry.default_model(request.provider)
         scenario: GoldenScenario | None = (
-            SCENARIO_INDEX.get(request.scenario_id) if request.scenario_id else None
+            (SCENARIO_INDEX | SHOWCASE_SCENARIO_INDEX).get(request.scenario_id)
+            if request.scenario_id
+            else None
         )
+        task = scenario.task if scenario else request.task
+        context = scenario.context if scenario else request.context
         policy = safety_policy_for(db, request.agent_type)
         run = AgentRun(
-            task=request.task,
+            task=task,
             agent_type=request.agent_type,
             provider=request.provider,
             model=model,
@@ -145,7 +198,11 @@ class AgentRunner:
             run_id=run.id,
             kind="agent",
             name=profile.name,
-            input={"task": request.task, "context_keys": sorted(request.context)},
+            input={
+                "task": task,
+                "context_keys": sorted(context),
+                "catalog_context": scenario is not None,
+            },
             attributes={
                 "provider": request.provider,
                 "model": model,
@@ -168,7 +225,7 @@ class AgentRunner:
                 provider=request.provider,
             )
             planner_started = time.perf_counter()
-            planned_tools = choose_tools(request.agent_type, request.task)
+            planned_tools = choose_tools(request.agent_type, task)
             enforce_plan(
                 db,
                 run_id=run.id,
@@ -192,7 +249,7 @@ class AgentRunner:
                     started_at=root.started_at,
                     ended_at=planner_ended,
                     duration_ms=max(1, int((time.perf_counter() - planner_started) * 1000)),
-                    input={"task": request.task, "available_tools": list(profile.tools)},
+                    input={"task": task, "available_tools": list(profile.tools)},
                     output=run.planner_output,
                     attributes={"step_count": len(planned_tools)},
                 )
@@ -209,7 +266,7 @@ class AgentRunner:
                 tool_started_at = _utcnow()
                 tool_started = time.perf_counter()
                 payload = self._payload_for_tool(
-                    tool_name, request.task, request.context, observations
+                    tool_name, task, context, observations
                 )
                 if tool_name == "policy_check":
                     payload["approval_threshold_usd"] = policy.approval_threshold_usd
@@ -282,7 +339,7 @@ class AgentRunner:
                 )
 
             prompt_packet: dict[str, Any] = {
-                "task": request.task,
+                "task": task,
                 "observations": observations,
                 "output_contract": {
                     "format": "json",

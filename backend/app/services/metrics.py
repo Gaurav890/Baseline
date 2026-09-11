@@ -9,6 +9,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.evals.catalog import GOLDEN_SCENARIOS
+from app.evals.workflows import SHOWCASE_SCENARIOS
 from app.models import (
     AgentRun,
     EvalSuiteRun,
@@ -17,9 +18,17 @@ from app.models import (
     HumanReview,
 )
 
-RECENT_RUN_AGENT_TYPES = ("research", "document", "support", "extraction")
+RECENT_RUN_AGENT_TYPES = (
+    "research",
+    "document",
+    "support",
+    "extraction",
+    "due_diligence",
+    "release_risk",
+    "incident_response",
+)
 RECENT_RUNS_PER_AGENT_TYPE = 2
-RECENT_RUN_LIMIT = 8
+RECENT_RUN_LIMIT = 10
 
 
 def _average(values: list[float]) -> float:
@@ -39,16 +48,23 @@ def _representative_recent_runs(runs: list[AgentRun]) -> list[AgentRun]:
     selected: list[AgentRun] = []
     selected_ids: set[str] = set()
 
-    for agent_type in RECENT_RUN_AGENT_TYPES:
-        selected_for_agent_type = 0
-        for run in runs:
-            if run.agent_type != agent_type or run.id in selected_ids:
-                continue
-            selected.append(run)
-            selected_ids.add(run.id)
-            selected_for_agent_type += 1
-            if selected_for_agent_type == RECENT_RUNS_PER_AGENT_TYPE:
+    # Round-robin selection keeps newer workflow types visible without letting
+    # one high-volume category monopolize the representative sample.
+    for _ in range(RECENT_RUNS_PER_AGENT_TYPE):
+        for agent_type in RECENT_RUN_AGENT_TYPES:
+            if len(selected) == RECENT_RUN_LIMIT:
                 break
+            candidate = next(
+                (
+                    run
+                    for run in runs
+                    if run.agent_type == agent_type and run.id not in selected_ids
+                ),
+                None,
+            )
+            if candidate is not None:
+                selected.append(candidate)
+                selected_ids.add(candidate.id)
 
     for run in runs:
         if len(selected) == RECENT_RUN_LIMIT:
@@ -127,10 +143,21 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
         .order_by(desc(EvalSuiteRun.created_at))
         .limit(1)
     )
+    golden_ids = {scenario.id for scenario in GOLDEN_SCENARIOS}
+    showcase_ids = {scenario.id for scenario in SHOWCASE_SCENARIOS}
     deterministic_scenarios = {
         run.scenario_id
         for run in runs
-        if run.scenario_id
+        if run.scenario_id in golden_ids
+        and any(
+            evaluation.evaluator_type == "deterministic+rubric"
+            for evaluation in run.evaluations
+        )
+    }
+    showcase_scenarios = {
+        run.scenario_id
+        for run in runs
+        if run.scenario_id in showcase_ids
         and any(
             evaluation.evaluator_type == "deterministic+rubric"
             for evaluation in run.evaluations
@@ -189,6 +216,11 @@ def dashboard_snapshot(db: Session) -> dict[str, Any]:
                     "coverage": len(deterministic_scenarios),
                 },
                 {"name": "Golden datasets", "status": "defined", "coverage": 218},
+                {
+                    "name": "Workflow showcase",
+                    "status": "active" if showcase_scenarios else "not run",
+                    "coverage": len(showcase_scenarios),
+                },
                 {
                     "name": "LLM-as-judge",
                     "status": "active" if judged_scenarios else "not run",

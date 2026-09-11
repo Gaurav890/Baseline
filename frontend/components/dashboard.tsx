@@ -18,6 +18,7 @@ import { CanaryPanel } from "./canary-panel";
 import { ExperimentWorkbench } from "./experiment-workbench";
 import { TrendChart } from "./trend-chart";
 import { ProductionLearningPanel } from "./production-learning-panel";
+import { WorkflowLab } from "./workflow-lab";
 
 const apiUrl = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
@@ -40,6 +41,9 @@ const agentTypeLabels: Record<string, string> = {
   document: "Documents",
   support: "Customer support",
   extraction: "Data extraction",
+  due_diligence: "Due diligence",
+  release_risk: "Release risk",
+  incident_response: "Incident response",
 };
 
 const formatPercent = (value: number, digits = 1) => `${(value * 100).toFixed(digits)}%`;
@@ -469,6 +473,7 @@ export function Dashboard() {
         <nav>
           <span className="nav-label">Workspace</span>
           <a className="active" href="#overview"><Icon name="overview" />Overview</a>
+          <a href="#workflow-lab"><Icon name="trace" />Workflow lab<span className="nav-count">3</span></a>
           <a href="#evaluation"><Icon name="flask" />Evaluation suites</a>
           <a href="#traces"><Icon name="trace" />Run traces</a>
           <a href="#datasets"><Icon name="database" />Golden datasets<span className="nav-count">218</span></a>
@@ -493,6 +498,7 @@ export function Dashboard() {
 
           {dataStatus === "loading" || dataStatus === "empty" || dataStatus === "error" ? <DashboardState status={dataStatus} onRetry={() => void loadAll()} /> : null}
           <DataSources integrations={integrations} status={integrationStatus} error={integrationError} checking={checking} onCheck={(integration) => void checkIntegration(integration)} onRetry={() => void loadAll()} />
+          <WorkflowLab apiUrl={apiUrl} demoMode={demoMode} />
           <AgentSafetyPanel apiUrl={apiUrl} demoMode={demoMode} />
           <CanaryPanel apiUrl={apiUrl} demoMode={demoMode} />
           <GoldenDatasetBrowser />
@@ -515,7 +521,7 @@ export function Dashboard() {
               </section>
               <section className="two-col lower-grid"><article className="panel" id="coverage"><div className="panel-head"><div><span className="eyebrow">Evaluation coverage</span><h3>Confidence stack</h3></div><strong className="coverage-total">{data.evaluation.scenario_count}<small>scenarios</small></strong></div><div className="method-list">{data.evaluation.methods.map((method, index) => <div className="method-row" key={method.name}><span className={`method-icon method-${index + 1}`}><Icon name={index === 4 ? "overview" : index === 1 ? "database" : "flask"} /></span><div><strong>{method.name}</strong><span>{method.coverage} scenarios covered</span></div><span className={`method-status ${method.status}`}>{method.status}</span><strong>{method.coverage}</strong></div>)}</div></article><article className="panel failures-panel"><div className="panel-head"><div><span className="eyebrow">Failure intelligence</span><h3>Observed breakdown</h3></div><span className="bad-badge">{Object.values(data.failure_breakdown).reduce((sum, count) => sum + count, 0)} failures</span></div>{Object.keys(data.failure_breakdown).length ? <div className="failure-bars">{Object.entries(data.failure_breakdown).map(([name, count], index) => <div key={name}><span>{titleCase(name)}</span><div><i className={`failure-${index + 1}`} style={{ width: `${Math.min(100, Math.max(5, count * 4.8))}%` }} /></div><strong>{count}</strong></div>)}</div> : <div className="panel-empty">No classified failures in the current dataset.</div>}</article></section>
 
-              <section className="panel runs-panel" id="traces"><div className="panel-head"><div><span className="eyebrow">Trace-level observability</span><h3>Representative agent runs</h3></div><span className="suite-label">Newest two from each work type</span></div><p className="runs-explainer">A balanced sample helps you compare the different kinds of work your agents handle. Select a run to see what happened step by step.</p>{data.recent_runs.length ? <div className="runs-table"><div className="run-row run-header"><span>Run / job</span><span>Work type</span><span>Model</span><span>Score</span><span>Latency</span><span>Cost</span><span>Status</span><span /></div>{data.recent_runs.map((run) => <button className="run-row" key={run.id} onClick={() => void openRun(run)}><span><code>{run.id.slice(0, 12)}</code><small>{run.task}</small></span><span className={`agent-chip ${run.agent_type}`}>{agentTypeLabel(run.agent_type)}</span><span className="run-model"><ProviderMark provider={run.provider} />{run.model}</span><span className={run.score !== null && run.score < 0.85 ? "score-bad" : "score-good"}>{run.score !== null ? formatPercent(run.score, 0) : "—"}</span><span>{formatLatency(run.latency_ms)}</span><span>{formatCost(run.cost_usd)}</span><span className={run.failure ? "run-failed" : "run-passed"}><i />{run.failure ? titleCase(run.failure) : titleCase(run.status)}</span><span><Icon name="chevron" /></span></button>)}</div> : <div className="panel-empty">No recent runs are available.</div>}</section>
+              <section className="panel runs-panel" id="traces"><div className="panel-head"><div><span className="eyebrow">Trace-level observability</span><h3>Representative agent runs</h3></div><span className="suite-label">Balanced across work types</span></div><p className="runs-explainer">A balanced sample helps you compare the different kinds of work your agents handle. Select a run to see what happened step by step.</p>{data.recent_runs.length ? <div className="runs-table"><div className="run-row run-header"><span>Run / job</span><span>Work type</span><span>Model</span><span>Score</span><span>Latency</span><span>Cost</span><span>Status</span><span /></div>{data.recent_runs.map((run) => <button className="run-row" key={run.id} onClick={() => void openRun(run)}><span><code>{run.id.slice(0, 12)}</code><small>{run.task}</small></span><span className={`agent-chip ${run.agent_type}`}>{agentTypeLabel(run.agent_type)}</span><span className="run-model"><ProviderMark provider={run.provider} />{run.model}</span><span className={run.score !== null && run.score < 0.85 ? "score-bad" : "score-good"}>{run.score !== null ? formatPercent(run.score, 0) : "—"}</span><span>{formatLatency(run.latency_ms)}</span><span>{formatCost(run.cost_usd)}</span><span className={run.failure ? "run-failed" : "run-passed"}><i />{run.failure ? titleCase(run.failure) : titleCase(run.status)}</span><span><Icon name="chevron" /></span></button>)}</div> : <div className="panel-empty">No recent runs are available.</div>}</section>
 
               <footer><span>Baseline agent reliability platform</span><span>{dataStatus === "demo" ? "Synthetic snapshot" : `API snapshot ${formatDate(data.generated_at)}`}</span></footer>
             </>

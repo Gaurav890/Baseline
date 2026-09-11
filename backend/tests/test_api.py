@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.evals.catalog import GOLDEN_SCENARIOS
+from app.evals.workflows import SHOWCASE_SCENARIOS
 
 
 def test_health_and_dashboard(client: TestClient) -> None:
@@ -19,6 +20,9 @@ def test_list_agents_and_providers(client: TestClient) -> None:
         "document",
         "support",
         "extraction",
+        "due_diligence",
+        "release_risk",
+        "incident_response",
     }
     assert {provider["provider"] for provider in payload["providers"]} == {
         "mock",
@@ -49,6 +53,56 @@ def test_golden_scenarios_are_paginated_and_do_not_expose_answer_keys(client: Te
         "dataset_version",
     }
     assert payload["items"][0]["category"] == "research"
+
+
+def test_workflow_lab_exposes_complexity_without_answer_keys(client: TestClient) -> None:
+    response = client.get("/api/workflows")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dataset_version"] == "workflow-showcase-v1"
+    assert payload["blocking"] is False
+    assert payload["release_gate_scenario_count"] == 218
+    assert len(payload["agents"]) == 3
+    assert len(payload["scenarios"]) == 6
+    assert all(len(agent["workflow"]) == 4 for agent in payload["agents"])
+    assert all("expected" not in scenario for scenario in payload["scenarios"])
+    assert all("SNAPSHOT" in scenario["provenance"] for scenario in payload["scenarios"])
+
+
+def test_complex_workflow_run_records_four_evidence_and_control_steps(
+    client: TestClient,
+) -> None:
+    scenario = SHOWCASE_SCENARIOS[0]
+    response = client.post(
+        "/api/runs",
+        json={
+            "task": scenario.task,
+            "agent_type": scenario.category,
+            "provider": "mock",
+            "context": scenario.context,
+            "scenario_id": scenario.id,
+        },
+    )
+
+    assert response.status_code == 201
+    run = response.json()
+    assert run["status"] == "completed"
+    assert run["evaluations"][0]["passed"] is True
+    assert (
+        run["evaluations"][0]["rubric"]["answer_correctness"]["method"]
+        == "entity, risk, evidence, decision, and approval contract"
+    )
+    tool_spans = [span for span in run["spans"] if span["kind"] == "tool"]
+    assert [span["name"] for span in tool_spans] == list(scenario.expected_tools)
+    assert tool_spans[0]["attributes"]["connector"] == "sec_edgar_snapshot"
+    assert tool_spans[0]["attributes"]["provenance"] == "SNAPSHOT"
+    assert tool_spans[2]["attributes"]["connector"] == "risk_rubric_v1"
+    assert tool_spans[2]["attributes"]["provenance"] == "SYNTHETIC"
+    assert [item["tool"] for item in tool_spans[2]["input"]["observations"]] == [
+        "sec_company_lookup",
+        "web_intelligence",
+    ]
 
 
 def test_persisted_experiment_compares_the_exact_same_cohort(client: TestClient) -> None:

@@ -28,6 +28,9 @@ DEFAULT_POLICY_LIMITS: dict[str, dict[str, int | float]] = {
     "document": {"max_tool_calls": 3, "max_runtime_seconds": 45, "max_cost": 1.5},
     "support": {"max_tool_calls": 4, "max_runtime_seconds": 45, "max_cost": 1.5},
     "extraction": {"max_tool_calls": 3, "max_runtime_seconds": 30, "max_cost": 1.0},
+    "due_diligence": {"max_tool_calls": 4, "max_runtime_seconds": 75, "max_cost": 3.0},
+    "release_risk": {"max_tool_calls": 4, "max_runtime_seconds": 75, "max_cost": 3.0},
+    "incident_response": {"max_tool_calls": 4, "max_runtime_seconds": 60, "max_cost": 2.0},
 }
 
 

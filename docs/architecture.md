@@ -26,6 +26,22 @@ The browser reads metrics and integration health from the API. Vercel contains n
 
 Execution failures are retained as failed runs with evaluator spans. A data source is `LIVE` only when the associated connector returned a successful health result. Configuration presence alone produces `unconfigured` or `unchecked`, never a live claim.
 
+### Agent portfolio
+
+The four focused agents cover research, document analysis, support, and extraction. Three
+production-shaped agents exercise the same runtime with four-step plans:
+
+```text
+Due diligence:    SEC identity ──> web signals ──> risk rubric ──> approval gate
+Release risk:     GitHub issues ─> web signals ──> risk rubric ──> approval gate
+Incident response: incident ─────> GitHub issue ─> risk rubric ──> approval gate
+```
+
+These workflows do not introduce an orchestration framework beside the existing runner. The
+deterministic planner, tool registry, connector metadata, safety policy, model call, evaluator, and
+trace persistence remain one reviewable execution path. No registered workflow tool mutates an
+external system; the final policy step records approval requirements only.
+
 ## Persistent entities
 
 | Entity | Evidence captured |
@@ -90,6 +106,13 @@ The blocking catalog remains exactly 218 scenarios:
 `backend/app/evals/snapshots/public_sources.v1.json` records primary SEC and GitHub API URLs, one UTC retrieval time, hashes of the full downloaded response bodies, and the selected fields used by the oracles. Those `SNAPSHOT` scenarios are immutable regression inputs and safe for deterministic CI. Source bodies were retrieved directly on 2026-09-06; future upstream changes do not mutate the fixture.
 
 `LIVE_CANARIES` are a separate non-blocking catalog. They test current connectivity and schema drift, may fail because of rate limits or upstream outages, and are never counted among the 218 merge-gating scenarios. A live canary result may be marked `LIVE` only after retrieval succeeds.
+
+`SHOWCASE_SCENARIOS` is a third, explicitly non-blocking catalog. Its six
+`workflow-showcase-v1` cases reuse the frozen SEC/GitHub sources, add visibly labeled synthetic
+business or incident signals where needed, and exercise the three complex four-tool plans. The
+public `/api/workflows` response exposes tasks, provenance, stages, tools, and output field names,
+but not the answer oracle. This makes the portfolio understandable without weakening or expanding
+the release gate implicitly.
 
 ## Production learning loop
 

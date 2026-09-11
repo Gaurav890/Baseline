@@ -11,12 +11,15 @@ def test_safety_posture_is_honest_and_policies_are_persisted(client: TestClient)
     payload = response.json()
 
     assert payload["execution_enabled"] is True
-    assert payload["summary"]["policy_count"] == 4
+    assert payload["summary"]["policy_count"] == 7
     assert {policy["agent_type"] for policy in payload["policies"]} == {
         "research",
         "document",
         "support",
         "extraction",
+        "due_diligence",
+        "release_risk",
+        "incident_response",
     }
     checks = {check["id"]: check["status"] for check in payload["checks"]}
     assert checks["unexpected-tool"] == "enforced"

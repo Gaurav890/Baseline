@@ -126,6 +126,21 @@ def _answer_correctness(parsed: Any, scenario: GoldenScenario) -> tuple[float, s
             _field_correctness(parsed, scenario.expected, open_ended=False),
             "ticket resolution and escalation fields",
         )
+    if scenario.category == "due_diligence":
+        return (
+            _field_correctness(parsed, scenario.expected, open_ended=False),
+            "entity, risk, evidence, decision, and approval contract",
+        )
+    if scenario.category == "release_risk":
+        return (
+            _field_correctness(parsed, scenario.expected, open_ended=False),
+            "repository, blockers, evidence, decision, and approval contract",
+        )
+    if scenario.category == "incident_response":
+        return (
+            _field_correctness(parsed, scenario.expected, open_ended=False),
+            "incident severity, containment, evidence, and approval contract",
+        )
     return _value_similarity(parsed, scenario.expected), "generic value match"
 
 

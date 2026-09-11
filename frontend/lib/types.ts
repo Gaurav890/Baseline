@@ -142,6 +142,46 @@ export type GoldenScenariosResponse = {
   items: GoldenScenario[];
 };
 
+export type WorkflowStage = {
+  name: string;
+  description: string;
+};
+
+export type WorkflowAgent = {
+  id: string;
+  name: string;
+  description: string;
+  complexity: string;
+  business_value: string;
+  example_task: string;
+  tools: string[];
+  workflow: WorkflowStage[];
+  output_fields: string[];
+  scenario_count: number;
+};
+
+export type WorkflowScenario = {
+  id: string;
+  agent_type: string;
+  task: string;
+  expected_tools: string[];
+  output_fields: string[];
+  tags: string[];
+  fixture_kind: string;
+  blocking: boolean;
+  provenance: Array<"LIVE" | "SNAPSHOT" | "SYNTHETIC" | "UNVERIFIED">;
+  source_urls: string[];
+};
+
+export type WorkflowCatalogResponse = {
+  dataset_version: string;
+  blocking: boolean;
+  release_gate_scenario_count: number;
+  summary: string;
+  agents: WorkflowAgent[];
+  scenarios: WorkflowScenario[];
+};
+
 export type EvaluationJob = {
   id: string;
   kind: "regression" | "benchmark";
