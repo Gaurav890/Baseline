@@ -240,11 +240,12 @@ class ExperimentCandidateCreate(BaseModel):
     provider: ProviderType
     model: str | None = Field(default=None, min_length=1, max_length=128)
     label: str | None = Field(default=None, min_length=1, max_length=160)
+    role: Literal["baseline", "candidate"] = "candidate"
 
 
 class ExperimentCreate(BaseModel):
     name: str = Field(min_length=3, max_length=160)
-    dataset_version: str = Field(default="golden-v1", min_length=1, max_length=80)
+    dataset_version: str = Field(default="golden-v2", min_length=1, max_length=80)
     scenario_limit: int = Field(default=20, ge=1, le=218)
     scenario_ids: list[str] | None = Field(default=None, min_length=1, max_length=218)
     repetitions: int = Field(default=1, ge=1, le=3)
@@ -256,6 +257,9 @@ class ExperimentCreate(BaseModel):
         identities = [(candidate.provider, candidate.model or "") for candidate in self.candidates]
         if len(set(identities)) != len(identities):
             raise ValueError("experiment candidates must use unique provider/model pairs")
+        baseline_count = sum(candidate.role == "baseline" for candidate in self.candidates)
+        if baseline_count > 1:
+            raise ValueError("experiment candidates may designate only one baseline")
         if self.scenario_ids and len(set(self.scenario_ids)) != len(self.scenario_ids):
             raise ValueError("scenario_ids must not contain duplicates")
         return self
@@ -266,6 +270,7 @@ class ExperimentCandidateRead(BaseModel):
 
     id: str
     label: str
+    role: str
     provider: str
     model: str
     status: str

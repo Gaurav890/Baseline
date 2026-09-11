@@ -20,7 +20,7 @@ from app.agents.profiles import AGENT_PROFILES
 from app.agents.runner import AgentRunner
 from app.config import settings
 from app.database import Base, SessionLocal, engine, get_db
-from app.evals.catalog import GOLDEN_SCENARIOS
+from app.evals.catalog import GOLDEN_DATASET_VERSION, GOLDEN_SCENARIOS
 from app.evals.judge import judge_run
 from app.evals.workflows import SHOWCASE_SCENARIOS, WORKFLOW_DATASET_VERSION
 from app.experiments.service import (
@@ -350,7 +350,22 @@ def scenarios(
                 "tags": scenario.tags,
                 "fixture_kind": scenario.fixture_kind,
                 "blocking": scenario.blocking,
-                "dataset_version": "golden-v1",
+                "dataset_version": GOLDEN_DATASET_VERSION,
+                "oracle_type": scenario.oracle_type,
+                "success_criteria": scenario.success_criteria,
+                "forbidden_tools": scenario.forbidden_tools,
+                "provenance": sorted(
+                    {
+                        str(source.get("provenance", "UNVERIFIED"))
+                        for source in scenario.context.get("sources", [])
+                        if isinstance(source, dict)
+                    }
+                ),
+                "source_urls": [
+                    str(source["url"])
+                    for source in scenario.context.get("sources", [])
+                    if isinstance(source, dict) and source.get("url")
+                ],
             }
             for scenario in filtered[offset : offset + limit]
         ],

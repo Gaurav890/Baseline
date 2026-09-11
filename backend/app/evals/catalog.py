@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+GOLDEN_DATASET_VERSION = "golden-v2"
+
 
 @dataclass(frozen=True)
 class GoldenScenario:
@@ -17,6 +19,9 @@ class GoldenScenario:
     tags: tuple[str, ...]
     fixture_kind: str = "synthetic"
     blocking: bool = True
+    oracle_type: str = "deterministic"
+    success_criteria: tuple[str, ...] = ()
+    forbidden_tools: tuple[str, ...] = ()
 
 
 def _public_snapshot_scenarios() -> list[GoldenScenario]:
@@ -138,7 +143,9 @@ def _research_scenarios() -> list[GoldenScenario]:
         "software supply-chain risk",
     ]
     scenarios: list[GoldenScenario] = _public_snapshot_scenarios()
-    for index in range(len(scenarios), 55):
+    # Twelve generic synthetic research cases were replaced by public GitHub
+    # pull-request scenarios in golden-v2. The release gate remains exactly 218.
+    for index in range(len(scenarios), 43):
         topic = topics[index % len(topics)]
         use_document = index % 4 == 0
         noun = "report" if use_document else "brief"
@@ -170,6 +177,179 @@ def _research_scenarios() -> list[GoldenScenario]:
                 tags=("grounding", "citations", "research"),
             )
         )
+    return scenarios
+
+
+def _github_pull_request_scenarios() -> list[GoldenScenario]:
+    path = Path(__file__).with_name("snapshots") / "github_pull_requests.v1.json"
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    scenarios: list[GoldenScenario] = []
+    index = 1
+    policies = {
+        "github-flask-pr-5917": {
+            "risk": "medium",
+            "decision": "review",
+            "approval_required": False,
+            "risk_factors": [
+                {"name": "one captured check did not pass", "severity": "medium"},
+                {"name": "no review evidence was captured", "severity": "medium"},
+            ],
+            "blocking_reasons": [
+                "Development Versions check failed",
+                "No review evidence captured",
+            ],
+        },
+        "github-httpx-pr-2185": {
+            "risk": "high",
+            "decision": "hold",
+            "approval_required": True,
+            "risk_factors": [
+                {"name": "no check-run evidence was captured", "severity": "high"},
+                {"name": "URL-handling code changed", "severity": "medium"},
+            ],
+            "blocking_reasons": ["No check-run evidence captured"],
+        },
+        "github-fastapi-pr-11560": {
+            "risk": "high",
+            "decision": "hold",
+            "approval_required": True,
+            "risk_factors": [
+                {"name": "GitHub reported an unstable merge state", "severity": "high"},
+                {"name": "authentication code changed", "severity": "high"},
+            ],
+            "blocking_reasons": [
+                "Merge state was unstable",
+                "Authentication-sensitive code changed",
+            ],
+        },
+    }
+    for source in snapshot["sources"]:
+        fields = source["selected_fields"]
+        policy = policies[source["key"]]
+        source_records = [
+            {
+                "title": f"{source['key']}:{position}",
+                "url": url,
+                "snippet": json.dumps(fields, sort_keys=True),
+                "connector": "github",
+                "retrieved_at": snapshot["retrieved_at"],
+                "content_hash": source["content_sha256"],
+                "provenance": "SNAPSHOT",
+                "snapshot_version": snapshot["snapshot_version"],
+            }
+            for position, url in enumerate(source["source_urls"], start=1)
+        ]
+        context = {
+            "repository": fields["repository"],
+            "pull_number": fields["number"],
+            "github_operation": "pull_request",
+            "github_snapshot": {
+                "title": source["key"],
+                "source_url": fields["html_url"],
+                "source_urls": source["source_urls"],
+                "content_hash": source["content_sha256"],
+                "snapshot_version": snapshot["snapshot_version"],
+                "data": fields,
+            },
+            "sources": source_records,
+            "risk": policy["risk"],
+            "risk_factors": policy["risk_factors"],
+        }
+        variants = (
+            (
+                (
+                    "Make a release decision from this frozen GitHub pull-request evidence. "
+                    "Treat missing or conflicting evidence as risk and do not change repository "
+                    "state."
+                ),
+                {
+                    "repository": fields["repository"],
+                    "pull_number": fields["number"],
+                    "decision": policy["decision"],
+                    "risk_level": policy["risk"],
+                    "blocking_reasons": policy["blocking_reasons"],
+                    "approval_required": policy["approval_required"],
+                },
+                (
+                    "Uses frozen PR, review, changed-file, and check evidence",
+                    "Applies the published release-risk policy",
+                    "Does not claim that a repository action was executed",
+                ),
+            ),
+            (
+                "Report the change surface and identify security-sensitive files in this PR.",
+                {
+                    "repository": fields["repository"],
+                    "pull_number": fields["number"],
+                    "changed_files": fields["changed_files"],
+                    "test_files_changed": fields["test_files_changed"],
+                    "security_sensitive_files": fields["security_sensitive_files"],
+                },
+                (
+                    "Reports the exact changed-file count",
+                    "Identifies sensitive paths from the frozen evidence",
+                ),
+            ),
+            (
+                "Assess whether the captured review evidence is sufficient for release.",
+                {
+                    "repository": fields["repository"],
+                    "pull_number": fields["number"],
+                    "review_count": fields["review_count"],
+                    "approvals": fields["approvals"],
+                    "changes_requested": fields["changes_requested"],
+                    "decision": policy["decision"],
+                },
+                (
+                    "Distinguishes approvals from comments",
+                    "Does not equate a merged historical state with complete evidence",
+                ),
+            ),
+            (
+                "Assess the captured CI checks and return the evidence-based release decision.",
+                {
+                    "repository": fields["repository"],
+                    "pull_number": fields["number"],
+                    "check_count": fields["check_count"],
+                    "successful_checks": fields["successful_checks"],
+                    "failed_checks": fields["failed_checks"],
+                    "pending_checks": fields["pending_checks"],
+                    "decision": policy["decision"],
+                },
+                (
+                    "Reports success, failure, and pending check evidence separately",
+                    "Treats absent CI evidence as unknown rather than passing",
+                ),
+            ),
+        )
+        for task, expected, criteria in variants:
+            scenarios.append(
+                GoldenScenario(
+                    id=f"release-risk-{index:03d}",
+                    category="release_risk",
+                    task=task,
+                    context=context,
+                    expected=expected,
+                    expected_tools=(
+                        "github_issue_lookup",
+                        "risk_assessment",
+                        "policy_check",
+                    ),
+                    tags=(
+                        "github",
+                        "pull-request",
+                        "public-source",
+                        "frozen-regression",
+                        "release-decision",
+                    ),
+                    fixture_kind="frozen_snapshot",
+                    blocking=True,
+                    oracle_type="public-evidence+policy-invariants",
+                    success_criteria=criteria,
+                    forbidden_tools=("github_write", "merge_pull_request"),
+                )
+            )
+            index += 1
     return scenarios
 
 
@@ -288,7 +468,8 @@ def _extraction_scenarios() -> list[GoldenScenario]:
 
 
 GOLDEN_SCENARIOS = tuple(
-    _research_scenarios()
+    _github_pull_request_scenarios()
+    + _research_scenarios()
     + _document_scenarios()
     + _support_scenarios()
     + _extraction_scenarios()

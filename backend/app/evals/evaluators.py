@@ -144,11 +144,17 @@ def _answer_correctness(parsed: Any, scenario: GoldenScenario) -> tuple[float, s
     return _value_similarity(parsed, scenario.expected), "generic value match"
 
 
-def _tool_accuracy(actual: list[str], expected: tuple[str, ...]) -> float:
+def _tool_accuracy(
+    actual: list[str], expected: tuple[str, ...], forbidden: tuple[str, ...] = ()
+) -> float:
     actual_set, expected_set = set(actual), set(expected)
+    if actual_set & set(forbidden):
+        return 0.0
     if not actual_set and not expected_set:
         return 1.0
-    return len(actual_set & expected_set) / max(1, len(actual_set | expected_set))
+    # Agentic workflows can take more than one valid route. Score whether the
+    # required evidence steps occurred; do not penalize a safe additional read.
+    return len(actual_set & expected_set) / max(1, len(expected_set))
 
 
 def _hallucination_rate(output: str, scenario: GoldenScenario | None) -> float:
@@ -178,7 +184,14 @@ def evaluate_run(
         correctness, correctness_method = _answer_correctness(parsed, scenario)
     else:
         correctness, correctness_method = completion, "task completion fallback"
-    tool_accuracy = _tool_accuracy(actual_tools, scenario.expected_tools) if scenario else 1.0
+    tool_accuracy = (
+        _tool_accuracy(actual_tools, scenario.expected_tools, scenario.forbidden_tools)
+        if scenario
+        else 1.0
+    )
+    forbidden_tools_used = (
+        sorted(set(actual_tools) & set(scenario.forbidden_tools)) if scenario else []
+    )
     hallucination = _hallucination_rate(output, scenario)
     score = round(
         0.30 * completion + 0.40 * correctness + 0.20 * tool_accuracy + 0.10 * (1 - hallucination),
@@ -186,7 +199,9 @@ def evaluate_run(
     )
 
     failure: str | None = None
-    if execution_error and execution_error.startswith("safety_policy:"):
+    if forbidden_tools_used:
+        failure = "policy_violation"
+    elif execution_error and execution_error.startswith("safety_policy:"):
         failure = "policy_violation"
     elif execution_error:
         failure = "execution_error"
@@ -215,8 +230,17 @@ def evaluate_run(
                 "score": round(correctness, 4),
                 "method": correctness_method,
             },
-            "tool_selection": {"weight": 0.20, "score": round(tool_accuracy, 4)},
+            "tool_selection": {
+                "weight": 0.20,
+                "score": round(tool_accuracy, 4),
+                "method": "required evidence steps and forbidden-action invariants",
+                "forbidden_tools_used": forbidden_tools_used,
+            },
             "groundedness": {"weight": 0.10, "score": round(1 - hallucination, 4)},
+            "oracle": {
+                "type": scenario.oracle_type if scenario else "completion-fallback",
+                "success_criteria": list(scenario.success_criteria) if scenario else [],
+            },
         },
         rationale=(
             "All deterministic and rubric checks passed."

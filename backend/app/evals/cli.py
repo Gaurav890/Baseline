@@ -16,7 +16,12 @@ def parse_args() -> argparse.Namespace:
         choices=["mock", "openai", "anthropic", "gemini"],
     )
     parser.add_argument("--model", default=None)
-    parser.add_argument("--baseline", type=float, default=0.90)
+    parser.add_argument(
+        "--baseline",
+        type=float,
+        default=None,
+        help="Optional verified comparison rate; omitted runs use persisted matching history.",
+    )
     parser.add_argument("--threshold", type=float, default=0.01)
     parser.add_argument("--limit", type=int, default=218)
     parser.add_argument("--all", action="store_true", help="Run all 218 golden scenarios")
@@ -38,11 +43,15 @@ async def main() -> int:
             ),
             db,
         )
-    delta = suite.success_rate - (suite.previous_success_rate or 0)
     marker = "REGRESSION" if suite.regression_detected else "PASS"
     print(f"{marker}: {suite.scenario_count} agent evals")
-    print(f"Previous: {(suite.previous_success_rate or 0):.1%}")
-    print(f"Current:  {suite.success_rate:.1%} ({delta:+.1%})")
+    if suite.previous_success_rate is None:
+        print("Previous: no matching persisted baseline")
+        print(f"Current:  {suite.success_rate:.1%}")
+    else:
+        delta = suite.success_rate - suite.previous_success_rate
+        print(f"Previous: {suite.previous_success_rate:.1%}")
+        print(f"Current:  {suite.success_rate:.1%} ({delta:+.1%})")
     print(f"Failures: {suite.failure_breakdown}")
     print(f"p95 latency: {suite.p95_latency_ms}ms | cost: ${suite.total_cost_usd:.4f}")
     return 1 if suite.regression_detected else 0

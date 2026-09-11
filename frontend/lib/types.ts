@@ -128,13 +128,18 @@ export type IntegrationsResponse = {
 
 export type GoldenScenario = {
   id: string;
-  category: "research" | "document" | "support" | "extraction";
+  category: "research" | "document" | "support" | "extraction" | "release_risk";
   task: string;
   expected_tools: string[];
   tags: string[];
   fixture_kind: "frozen_snapshot" | "synthetic";
   blocking: boolean;
   dataset_version: string;
+  oracle_type: string;
+  success_criteria: string[];
+  forbidden_tools: string[];
+  provenance: Array<"LIVE" | "SNAPSHOT" | "SYNTHETIC" | "UNVERIFIED">;
+  source_urls: string[];
 };
 
 export type GoldenScenariosResponse = {
@@ -205,6 +210,7 @@ export type ProviderAvailability = {
 export type ExperimentCandidate = {
   id: string;
   label: string;
+  role: "baseline" | "candidate";
   provider: string;
   model: string;
   status: string;
@@ -239,6 +245,18 @@ export type Experiment = {
     quality_candidate_id?: string;
     fastest_candidate_id?: string;
     lowest_cost_candidate_id?: string;
+    baseline_candidate_id?: string;
+    candidate_id?: string;
+    deployment_decision?: "SHIP" | "SHIP_WITH_GUARDRAILS" | "BLOCK";
+    blocking_reasons?: string[];
+    guardrails?: string[];
+    comparison?: {
+      quality_delta: number;
+      pass_rate_delta: number;
+      hallucination_delta: number;
+      cost_per_task_delta: number;
+      latency_p95_delta_ms: number;
+    };
     summary?: string;
   } | null;
   created_at: string;

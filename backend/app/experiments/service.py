@@ -13,12 +13,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.agents.runner import AgentRunner
 from app.config import settings
-from app.evals.catalog import GOLDEN_SCENARIOS, SCENARIO_INDEX
+from app.evals.catalog import GOLDEN_DATASET_VERSION, GOLDEN_SCENARIOS, SCENARIO_INDEX
 from app.models import AgentRun, Evaluation, Experiment, ExperimentCandidate
 from app.providers.registry import provider_registry
 from app.schemas import ExperimentCreate, RunCreate
 
-DATASET_VERSION = "golden-v1"
+DATASET_VERSION = GOLDEN_DATASET_VERSION
 
 
 class ExperimentConflictError(ValueError):
@@ -38,7 +38,7 @@ def balanced_scenario_ids(limit: int) -> list[str]:
     grouped: dict[str, list[str]] = defaultdict(list)
     for scenario in GOLDEN_SCENARIOS:
         grouped[scenario.category].append(scenario.id)
-    categories = ("research", "document", "support", "extraction")
+    categories = ("release_risk", "research", "document", "support", "extraction")
     selected: list[str] = []
     index = 0
     while len(selected) < limit:
@@ -184,11 +184,17 @@ def create_experiment(
         idempotency_key=key,
         request_hash=digest,
     )
-    for candidate in request.candidates:
+    explicit_baseline = any(candidate.role == "baseline" for candidate in request.candidates)
+    for index, candidate in enumerate(request.candidates):
         model = candidate.model or provider_registry.default_model(candidate.provider)
         experiment.candidates.append(
             ExperimentCandidate(
                 label=candidate.label or model,
+                role=(
+                    candidate.role
+                    if explicit_baseline
+                    else "baseline" if index == 0 else "candidate"
+                ),
                 provider=candidate.provider,
                 model=model,
             )
@@ -233,6 +239,76 @@ def _matching_baseline_candidate(
         ),
         None,
     )
+
+
+def _deployment_recommendation(
+    baseline: ExperimentCandidate, candidate: ExperimentCandidate
+) -> dict[str, Any]:
+    baseline_pass_rate = baseline.pass_rate or 0.0
+    candidate_pass_rate = candidate.pass_rate or 0.0
+    baseline_quality = baseline.quality or 0.0
+    candidate_quality = candidate.quality or 0.0
+    baseline_hallucination = baseline.hallucination_rate or 0.0
+    candidate_hallucination = candidate.hallucination_rate or 0.0
+    baseline_policy_failures = baseline.failure_breakdown.get("policy_violation", 0)
+    candidate_policy_failures = candidate.failure_breakdown.get("policy_violation", 0)
+    blocking_reasons: list[str] = []
+    guardrails: list[str] = []
+
+    if candidate_policy_failures > baseline_policy_failures:
+        blocking_reasons.append(
+            f"Policy violations increased from {baseline_policy_failures} to "
+            f"{candidate_policy_failures}."
+        )
+    if candidate_pass_rate < baseline_pass_rate - 0.01:
+        blocking_reasons.append(
+            f"Pass rate regressed by {(baseline_pass_rate - candidate_pass_rate) * 100:.1f} points."
+        )
+    if candidate_hallucination > baseline_hallucination + 0.02:
+        blocking_reasons.append(
+            "Unsupported-source rate exceeded the baseline tolerance by more than 2 points."
+        )
+
+    baseline_cost = baseline.cost_per_task or 0.0
+    candidate_cost = candidate.cost_per_task or 0.0
+    if baseline_cost > 0 and candidate_cost > baseline_cost * 1.25:
+        guardrails.append("Set a per-run spending ceiling before rollout.")
+    baseline_latency = baseline.latency_p95_ms or 0
+    candidate_latency = candidate.latency_p95_ms or 0
+    if baseline_latency > 0 and candidate_latency > baseline_latency * 1.25:
+        guardrails.append("Use a canary rollout with a p95 latency alert.")
+    if candidate_quality < baseline_quality:
+        guardrails.append("Keep human review enabled for lower-confidence outcomes.")
+
+    if blocking_reasons:
+        decision = "BLOCK"
+        summary = f"Block {candidate.label}: {blocking_reasons[0]}"
+    elif guardrails:
+        decision = "SHIP_WITH_GUARDRAILS"
+        summary = f"Ship {candidate.label} with guardrails and monitor the measured trade-offs."
+    else:
+        decision = "SHIP"
+        summary = (
+            f"Ship {candidate.label}: it met the baseline quality and safety gates on this cohort."
+        )
+
+    return {
+        "deployment_decision": decision,
+        "baseline_candidate_id": baseline.id,
+        "candidate_id": candidate.id,
+        "blocking_reasons": blocking_reasons,
+        "guardrails": guardrails,
+        "comparison": {
+            "quality_delta": round(candidate_quality - baseline_quality, 4),
+            "pass_rate_delta": round(candidate_pass_rate - baseline_pass_rate, 4),
+            "hallucination_delta": round(
+                candidate_hallucination - baseline_hallucination, 4
+            ),
+            "cost_per_task_delta": round(candidate_cost - baseline_cost, 6),
+            "latency_p95_delta_ms": candidate_latency - baseline_latency,
+        },
+        "summary": summary,
+    }
 
 
 async def execute_experiment(experiment_id: str, db: Session) -> dict[str, Any]:
@@ -334,13 +410,17 @@ async def execute_experiment(experiment_id: str, db: Session) -> dict[str, Any]:
         best_quality = max(completed, key=lambda item: item.quality or 0)
         fastest = min(completed, key=lambda item: item.latency_p50_ms or 0)
         cheapest = min(completed, key=lambda item: item.cost_per_task or 0)
-        experiment.recommendation = {
+        current_baseline = next(
+            (item for item in completed if item.role == "baseline"), completed[0]
+        )
+        deployable = [item for item in completed if item.id != current_baseline.id]
+        evaluated_candidate = max(deployable, key=lambda item: item.quality or 0)
+        experiment.recommendation = _deployment_recommendation(
+            current_baseline, evaluated_candidate
+        ) | {
             "quality_candidate_id": best_quality.id,
             "fastest_candidate_id": fastest.id,
             "lowest_cost_candidate_id": cheapest.id,
-            "summary": (
-                f"{best_quality.label} had the highest measured quality on this exact cohort."
-            ),
         }
         experiment.status = "completed"
         experiment.completed_at = datetime.now(UTC)
@@ -372,6 +452,7 @@ def experiment_result(experiment: Experiment) -> dict[str, Any]:
         "candidates": [
             {
                 "id": candidate.id,
+                "role": candidate.role,
                 "provider": candidate.provider,
                 "model": candidate.model,
                 "quality": candidate.quality,

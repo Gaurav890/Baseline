@@ -137,6 +137,11 @@ class AgentRunner:
                 "repository": context.get("repository", ""),
                 "operation": context.get("github_operation", "issue"),
                 "issue_number": context.get("issue_number", 1),
+                **(
+                    {"pull_number": context["pull_number"]}
+                    if context.get("pull_number")
+                    else {}
+                ),
                 "max_results": context.get("max_results", 10),
                 "state": context.get("state", "open"),
                 **(

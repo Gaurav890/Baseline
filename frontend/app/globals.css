@@ -1930,7 +1930,7 @@ footer {
   border-radius: 7px;
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   margin-top: 16px;
   padding: 12px;
 }
@@ -2046,6 +2046,7 @@ footer {
 .scenario-id em.document { background: #fff7dc; color: #8a6800; }
 .scenario-id em.support { background: #f0ecff; color: #6149ba; }
 .scenario-id em.extraction { background: var(--orange-soft); color: #a54526; }
+.scenario-id em.release_risk { background: #fce9f2; color: #9f3565; }
 
 .scenario-task {
   color: #37352f;
@@ -2074,6 +2075,24 @@ footer {
 .scenario-tags em {
   background: var(--green-soft);
   color: var(--green);
+}
+
+.scenario-contract {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.scenario-contract > strong {
+  color: #4d4a43;
+  font-size: 8px;
+}
+
+.scenario-contract > small {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.45;
 }
 
 .dataset-pagination {
@@ -2655,6 +2674,58 @@ footer {
 }
 
 .recommendation-callout span { display: flex; flex-direction: column; gap: 2px; }
+
+.recommendation-callout.decision-block {
+  background: #fff0ed;
+  color: var(--red);
+}
+
+.recommendation-callout.decision-ship_with_guardrails {
+  background: #fff7dc;
+  color: #8a6410;
+}
+
+.release-decision-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.release-decision-grid > div {
+  background: #faf9f4;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px;
+}
+
+.release-decision-grid span,
+.release-reasons {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.release-decision-grid strong {
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+}
+
+.release-reasons {
+  background: #fff0ed;
+  border-radius: 6px;
+  color: var(--red);
+  line-height: 1.5;
+  margin: 8px 0 0;
+  padding: 9px 12px 9px 26px;
+}
+
+.release-reasons.guardrails {
+  background: #fff7dc;
+  color: #7b5a0d;
+}
 
 .experiment-table {
   margin: 16px -24px 0;

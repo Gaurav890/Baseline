@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "snapshot_version": "github-pull-requests-v1",
+  "retrieved_at": "2026-09-11T05:59:55Z",
+  "provenance": "SNAPSHOT",
+  "sources": [
+    {
+      "key": "github-flask-pr-5917",
+      "connector": "github",
+      "content_sha256": "70cfcbd767fdcb24bbd710016eb05c42c78bbaebdbc8e5089227c85bee8f863b",
+      "source_urls": [
+        "https://api.github.com/repos/pallets/flask/pulls/5917",
+        "https://api.github.com/repos/pallets/flask/pulls/5917/files",
+        "https://api.github.com/repos/pallets/flask/pulls/5917/reviews",
+        "https://api.github.com/repos/pallets/flask/commits/e82db2ca3a22c9614c1987392c9cfaa8c6ce99ad/check-runs",
+        "https://github.com/pallets/flask/pull/5917"
+      ],
+      "response_hashes": {
+        "pull_request": "f4ce73adfea0499f24c9df3375682554cd08942e4b35c133e7c7494954eba974",
+        "files": "71009862b2ba31c76ce95f5a15959d714ee964185a4e9d1cb2898afa02a200d0",
+        "reviews": "2ba33ca0557f1bb5b7ba88d67f9d0093c7185a36ec51fe2b7bd9372d3e001d6d",
+        "checks": "3b02cb17284ecab733a17e8ffc682394fed525988008d14be5fbbab75eec208d"
+      },
+      "selected_fields": {
+        "repository": "pallets/flask",
+        "number": 5917,
+        "title": "fix provide_automatic_options override",
+        "state": "closed",
+        "draft": false,
+        "merged": true,
+        "mergeable_state": "unknown",
+        "author": "davidism",
+        "base_ref": "main",
+        "head_sha": "e82db2ca3a22c9614c1987392c9cfaa8c6ce99ad",
+        "additions": 96,
+        "deletions": 86,
+        "changed_files": 7,
+        "files": [
+          "CHANGES.rst",
+          "docs/config.rst",
+          "src/flask/sansio/app.py",
+          "tests/test_basic.py",
+          "tests/test_blueprints.py",
+          "tests/test_cli.py",
+          "tests/test_views.py"
+        ],
+        "test_files_changed": true,
+        "security_sensitive_files": [],
+        "review_count": 0,
+        "approvals": 0,
+        "changes_requested": 0,
+        "check_count": 13,
+        "successful_checks": 12,
+        "failed_checks": ["Development Versions"],
+        "pending_checks": [],
+        "html_url": "https://github.com/pallets/flask/pull/5917"
+      }
+    },
+    {
+      "key": "github-httpx-pr-2185",
+      "connector": "github",
+      "content_sha256": "818ad2ce7f83bbf63d98e65d6170fc42175d27753069edf52606f0f6c9680a5a",
+      "source_urls": [
+        "https://api.github.com/repos/encode/httpx/pulls/2185",
+        "https://api.github.com/repos/encode/httpx/pulls/2185/files",
+        "https://api.github.com/repos/encode/httpx/pulls/2185/reviews",
+        "https://api.github.com/repos/encode/httpx/commits/e77c0ff5ec0f4843f5f8b908d4f9006ec737f0ae/check-runs",
+        "https://github.com/encode/httpx/pull/2185"
+      ],
+      "response_hashes": {
+        "pull_request": "9d510be490b5655a23c071006a4a9b99070a72ca1eb1a2411acbfd471bae98fc",
+        "files": "0e93fe2d66cd5e603d0feaff119a1e1edc9da6a799cb9af99ebc45e132d5987b",
+        "reviews": "429d32e2bddc23e6b85eb58a2b1889cf5cea344e7d8a1863df38907c8c9cb32a",
+        "checks": "c7b61227444bbb547c0bf732c29f8c6b96105350ff14f4512d97def04b2ccd1b"
+      },
+      "selected_fields": {
+        "repository": "encode/httpx",
+        "number": 2185,
+        "title": "Patch `copy_with`",
+        "state": "closed",
+        "draft": false,
+        "merged": true,
+        "mergeable_state": "unknown",
+        "author": "lebr0nli",
+        "base_ref": "master",
+        "head_sha": "e77c0ff5ec0f4843f5f8b908d4f9006ec737f0ae",
+        "additions": 54,
+        "deletions": 1,
+        "changed_files": 2,
+        "files": ["httpx/_urls.py", "tests/models/test_url.py"],
+        "test_files_changed": true,
+        "security_sensitive_files": ["httpx/_urls.py"],
+        "review_count": 2,
+        "approvals": 1,
+        "changes_requested": 0,
+        "check_count": 0,
+        "successful_checks": 0,
+        "failed_checks": [],
+        "pending_checks": [],
+        "html_url": "https://github.com/encode/httpx/pull/2185"
+      }
+    },
+    {
+      "key": "github-fastapi-pr-11560",
+      "connector": "github",
+      "content_sha256": "2ee022c3b87e8f1891ab50094b29f655e6745f60d08ccf83875f289e0d7dd777",
+      "source_urls": [
+        "https://api.github.com/repos/fastapi/fastapi/pulls/11560",
+        "https://api.github.com/repos/fastapi/fastapi/pulls/11560/files",
+        "https://api.github.com/repos/fastapi/fastapi/pulls/11560/reviews",
+        "https://api.github.com/repos/fastapi/fastapi/commits/e6ed1039c8d65d1ba2a167e96cb924bdffa21731/check-runs",
+        "https://github.com/fastapi/fastapi/pull/11560"
+      ],
+      "response_hashes": {
+        "pull_request": "ccc8c581a920c3caca4c3af5480eeb1c5b84c99317bcf65113fd400b38900b35",
+        "files": "688b2728b03d11202eadf1430def73d2ab04303abb77d090c09397dcf7d1ee88",
+        "reviews": "0a324963de5a3183b514d6e36077bd66c0eb3050b743e5c500040ded1c51dc59",
+        "checks": "13ef6ff0a59c9a60f2fe9dc239522cdc73a462a9778cf6b9b0051af6af13613e"
+      },
+      "selected_fields": {
+        "repository": "fastapi/fastapi",
+        "number": 11560,
+        "title": "Implement OAuth2ClientCredentials class",
+        "state": "open",
+        "draft": false,
+        "merged": false,
+        "mergeable_state": "unstable",
+        "author": "rhysrevans3",
+        "base_ref": "master",
+        "head_sha": "e6ed1039c8d65d1ba2a167e96cb924bdffa21731",
+        "additions": 318,
+        "deletions": 0,
+        "changed_files": 6,
+        "files": [
+          "docs/en/docs/reference/security/index.md",
+          "fastapi/security/__init__.py",
+          "fastapi/security/oauth2.py",
+          "tests/test_security_oauth2_client_credentials.py",
+          "tests/test_security_oauth2_client_credentials_description.py",
+          "tests/test_security_oauth2_client_credentials_optional.py"
+        ],
+        "test_files_changed": true,
+        "security_sensitive_files": ["fastapi/security/oauth2.py"],
+        "review_count": 7,
+        "approvals": 2,
+        "changes_requested": 0,
+        "check_count": 36,
+        "successful_checks": 36,
+        "failed_checks": [],
+        "pending_checks": [],
+        "html_url": "https://github.com/fastapi/fastapi/pull/11560"
+      }
+    }
+  ]
+}

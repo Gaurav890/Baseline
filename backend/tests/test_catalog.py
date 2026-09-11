@@ -12,7 +12,13 @@ def test_catalog_contains_exactly_218_unique_scenarios() -> None:
 
 def test_catalog_covers_all_agent_types() -> None:
     counts = Counter(scenario.category for scenario in GOLDEN_SCENARIOS)
-    assert counts == {"research": 55, "document": 55, "support": 54, "extraction": 54}
+    assert counts == {
+        "release_risk": 12,
+        "research": 43,
+        "document": 55,
+        "support": 54,
+        "extraction": 54,
+    }
 
 
 def test_each_scenario_has_an_oracle_and_expected_tools() -> None:
@@ -27,15 +33,36 @@ def test_public_snapshots_are_versioned_and_blocking() -> None:
     snapshots = [
         scenario for scenario in GOLDEN_SCENARIOS if scenario.fixture_kind == "frozen_snapshot"
     ]
-    assert len(snapshots) == 20
+    assert len(snapshots) == 32
     for scenario in snapshots:
         assert scenario.blocking is True
         assert "frozen-regression" in scenario.tags
         source = scenario.context["sources"][0]
         assert source["provenance"] == "SNAPSHOT"
-        assert source["snapshot_version"] == "public-sources-v1"
+        assert source["snapshot_version"] in {
+            "public-sources-v1",
+            "github-pull-requests-v1",
+        }
         assert len(source["content_hash"]) == 64
         assert source["url"].startswith(("https://data.sec.gov/", "https://api.github.com/"))
+
+
+def test_release_risk_cases_use_public_pr_evidence_and_policy_invariants() -> None:
+    cases = [scenario for scenario in GOLDEN_SCENARIOS if scenario.category == "release_risk"]
+    assert len(cases) == 12
+    assert {scenario.context["repository"] for scenario in cases} == {
+        "pallets/flask",
+        "encode/httpx",
+        "fastapi/fastapi",
+    }
+    for scenario in cases:
+        assert scenario.oracle_type == "public-evidence+policy-invariants"
+        assert scenario.success_criteria
+        assert "merge_pull_request" in scenario.forbidden_tools
+        assert scenario.context["github_operation"] == "pull_request"
+        assert scenario.context["github_snapshot"]["snapshot_version"] == (
+            "github-pull-requests-v1"
+        )
 
 
 def test_live_canaries_are_not_part_of_blocking_catalog() -> None:

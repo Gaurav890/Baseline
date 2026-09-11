@@ -154,43 +154,98 @@ def _github_issue_lookup(payload: dict[str, Any], connectors: ConnectorRegistry)
         if not isinstance(evidence, dict):
             raise ConnectorError("GitHub snapshot data must be an object")
         source_url = str(snapshot.get("source_url", "")).strip()
+        raw_source_urls = snapshot.get("source_urls", [source_url])
+        source_urls = [
+            str(url).strip()
+            for url in raw_source_urls
+            if isinstance(url, str) and str(url).strip()
+        ]
         validated = connectors.get("source_packet").execute(
             {
                 "query": str(payload.get("query", "GitHub issue lookup")),
                 "sources": [
                     {
-                        "title": str(snapshot.get("title", "GitHub issue snapshot")),
-                        "url": source_url,
+                        "title": f"{snapshot.get('title', 'GitHub snapshot')}:{index}",
+                        "url": url,
                         "snippet": json.dumps(evidence, sort_keys=True),
                         "provenance": "SNAPSHOT",
                     }
+                    for index, url in enumerate(source_urls, start=1)
                 ],
             }
         )
-        issue = {
-            "number": evidence.get("number"),
-            "title": evidence.get("title"),
-            "state": evidence.get("state"),
-            "url": evidence.get("html_url") or source_url,
-            "created_at": evidence.get("created_at"),
-            "updated_at": evidence.get("updated_at"),
-            "closed_at": evidence.get("closed_at"),
-        }
-        output = {
-            "repository": evidence.get("repository") or payload.get("repository"),
-            "operation": "issue",
-            "issues": [issue],
-            "source_count": 1,
-            "authenticated": False,
-        }
+        operation = str(payload.get("operation", "issue")).lower()
+        if operation in {"pull_request", "pull", "pr"}:
+            pull = {
+                key: evidence.get(key)
+                for key in (
+                    "number",
+                    "title",
+                    "state",
+                    "draft",
+                    "merged",
+                    "mergeable_state",
+                    "author",
+                    "base_ref",
+                    "head_sha",
+                    "additions",
+                    "deletions",
+                    "changed_files",
+                    "html_url",
+                )
+            }
+            pull["url"] = pull.pop("html_url")
+            output = {
+                "repository": evidence.get("repository") or payload.get("repository"),
+                "operation": "pull_request",
+                "pull_request": pull,
+                "files": [
+                    {"filename": filename}
+                    for filename in evidence.get("files", [])
+                    if isinstance(filename, str)
+                ],
+                "summary": {
+                    key: evidence.get(key)
+                    for key in (
+                        "changed_files",
+                        "test_files_changed",
+                        "security_sensitive_files",
+                        "review_count",
+                        "approvals",
+                        "changes_requested",
+                        "check_count",
+                        "successful_checks",
+                        "failed_checks",
+                        "pending_checks",
+                    )
+                },
+                "authenticated": False,
+            }
+        else:
+            issue = {
+                "number": evidence.get("number"),
+                "title": evidence.get("title"),
+                "state": evidence.get("state"),
+                "url": evidence.get("html_url") or source_url,
+                "created_at": evidence.get("created_at"),
+                "updated_at": evidence.get("updated_at"),
+                "closed_at": evidence.get("closed_at"),
+            }
+            output = {
+                "repository": evidence.get("repository") or payload.get("repository"),
+                "operation": "issue",
+                "issues": [issue],
+                "source_count": 1,
+                "authenticated": False,
+            }
         return ToolExecution(
             output=output,
             metadata=ConnectorMetadata(
                 source_url=validated.metadata.source_url,
-                source_urls=validated.metadata.source_urls,
+                source_urls=tuple(source_urls),
                 api_endpoint=validated.metadata.source_url,
                 retrieved_at=validated.metadata.retrieved_at,
-                content_hash=canonical_hash(evidence),
+                content_hash=str(snapshot.get("content_hash") or canonical_hash(evidence)),
                 connector="github_snapshot",
                 latency_ms=max(0, int((time.perf_counter() - started) * 1000)),
                 provenance=Provenance.SNAPSHOT,
@@ -426,7 +481,7 @@ for tool in [
     ),
     Tool(
         "github_issue_lookup",
-        "Retrieve bounded public GitHub issue evidence or its versioned frozen snapshot.",
+        "Retrieve bounded GitHub issue or pull-request evidence, live or from a frozen snapshot.",
         _github_issue_lookup,
     ),
     Tool(

@@ -30,6 +30,7 @@ type ScenarioCategory = GoldenScenario["category"] | "all";
 const DATASET_PAGE_SIZE = 12;
 const scenarioCategories: Array<{ value: ScenarioCategory; label: string }> = [
   { value: "all", label: "All test cases" },
+  { value: "release_risk", label: "GitHub release risk" },
   { value: "research", label: "Research" },
   { value: "document", label: "Documents" },
   { value: "support", label: "Customer support" },
@@ -276,12 +277,13 @@ function GoldenDatasetBrowser() {
         <span className={`dataset-count ${status}`}>{status === "ready" ? `${total} test cases` : status === "loading" ? "Loading" : "Test library"}</span>
       </div>
       <p className="dataset-description">
-        This is the checklist we use to see whether an agent can handle real work reliably. Each row is one test case; the expected answer stays private so the test remains fair.
+        This is the checklist used to decide whether an agent change is safe to release. Golden v2 includes frozen public GitHub PR evidence; live data is tested separately so CI remains repeatable.
       </p>
       <div className="dataset-explainer">
         <div><strong>Job</strong><span>What we ask the agent to do.</span></div>
         <div><strong>Work type</strong><span>The kind of task: research, documents, support, or extraction.</span></div>
-        <div><strong>Information used</strong><span>The tools or sources the agent should consult.</span></div>
+        <div><strong>Evidence used</strong><span>Required read-only steps and frozen source provenance.</span></div>
+        <div><strong>Pass contract</strong><span>Observable outcomes and authority limits—not one preferred chain of thought.</span></div>
       </div>
 
       <div className="dataset-filter" aria-label="Filter golden scenarios by category">
@@ -312,14 +314,21 @@ function GoldenDatasetBrowser() {
         <>
           <div className="dataset-table" role="table" aria-label="Golden dataset test cases">
             <div className="dataset-row dataset-header" role="row">
-              <span>Test case</span><span>Job for the agent</span><span>Information it should use</span><span>Topics</span>
+              <span>Test case</span><span>Job for the agent</span><span>Required evidence</span><span>How passing is judged</span>
             </div>
             {catalog.items.map((scenario) => (
               <div className="dataset-row" role="row" key={scenario.id}>
                 <span className="scenario-id"><code>{scenario.id}</code><em className={scenario.category}>{agentTypeLabel(scenario.category)}</em></span>
                 <span className="scenario-task">{scenario.task}</span>
                 <span className="tool-tags">{scenario.expected_tools.map((tool) => <code key={tool}>{tool}</code>)}</span>
-                <span className="scenario-tags">{scenario.tags.slice(0, 3).map((tag) => <em key={tag}>{tag}</em>)}</span>
+                <span className="scenario-contract">
+                  <strong>{titleCase(scenario.oracle_type)}</strong>
+                  <small>{scenario.success_criteria[0] ?? "Deterministic expected outcome"}</small>
+                  <span className="scenario-tags">
+                    {scenario.provenance.map((value) => <em key={value}>{value}</em>)}
+                    {scenario.forbidden_tools.length ? <em>read-only</em> : null}
+                  </span>
+                </span>
               </div>
             ))}
           </div>

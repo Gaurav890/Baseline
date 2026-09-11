@@ -57,7 +57,9 @@ For deterministic connector fixtures in tests only, set both `ENVIRONMENT=test` 
 
 - SEC EDGAR uses the public submissions and company-facts APIs without a key. Set `SEC_USER_AGENT` to an application name plus monitored email address. `SEC_REQUESTS_PER_SECOND` defaults to 4 per process so the default API-plus-worker topology remains below the SEC's published 10-request/second ceiling.
 - Tavily is configured only when `TAVILY_API_KEY` is present.
-- GitHub reads public issues anonymously, or uses `GITHUB_TOKEN` for higher limits/private access explicitly granted to the token.
+- GitHub reads public issues and bounded pull-request evidence (PR facts, changed files, reviews,
+  and check runs) anonymously, or uses `GITHUB_TOKEN` for higher limits/private access explicitly
+  granted to the token. The connector is read-only.
 - Direct URL retrieval is HTTPS-only, resolves and rejects private/link-local/reserved targets, follows only allowlisted hosts, enforces response limits and timeouts, and retries transient failures with backoff.
 
 The data-source panel reports configured state, last successful check, event count, and provenance. “Configured” is not treated as proof of connectivity.
@@ -70,7 +72,7 @@ Regression and benchmark runs use a persistent job contract. Local/tests use the
 curl -X POST http://localhost:8000/api/evaluation-jobs \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: pr-184-head-8f3c2a1' \
-  -d '{"kind":"regression","regression":{"provider":"mock","limit":218,"baseline_success_rate":0.90,"threshold":0.01}}'
+  -d '{"kind":"regression","regression":{"provider":"mock","limit":218,"threshold":0.01}}'
 ```
 
 Poll `GET /api/evaluation-jobs/{id}` and read `GET /api/evaluation-jobs/{id}/results`. Reusing a key with the same payload returns the original job; reusing it with a different payload is rejected. Headerless requests use a canonical-payload key scoped to the UTC hour, but callers should send an explicit stable key. Run the production worker with `python -m app.jobs.worker`.
@@ -81,10 +83,14 @@ The checked-in gate remains deterministic:
 
 ```bash
 cd backend
-ENVIRONMENT=test BASELINE_FIXTURE_CONNECTORS=true uv run python -m app.evals.cli --provider mock --all --baseline 0.90 --threshold 0.01
+ENVIRONMENT=test BASELINE_FIXTURE_CONNECTORS=true uv run python -m app.evals.cli --provider mock --all --threshold 0.01
 ```
 
-Twenty of the 218 blocking scenarios are frozen, versioned snapshots derived from primary SEC and GitHub API payloads. Their retrieval timestamp, source URL, selected fields, and full-response hash are checked in at `backend/app/evals/snapshots/public_sources.v1.json`. Live SEC/GitHub canaries are defined separately, do not belong to the golden catalog, and never block CI.
+Thirty-two of the 218 blocking scenarios are frozen, versioned snapshots derived from primary SEC
+and GitHub API payloads. Twelve exercise real public GitHub pull-request packets containing PR
+facts, changed paths, reviews, and CI check results. Retrieval timestamps, source URLs, selected
+fields, and response hashes are checked in under `backend/app/evals/snapshots/`. Live SEC/GitHub
+canaries are separate, do not belong to the golden catalog, and never block CI.
 
 ## Complex workflow showcase
 
@@ -92,8 +98,8 @@ The dashboard's **Workflow Lab** presents three additional production-shaped age
 
 - **Company Due Diligence Analyst** combines SEC identity evidence, approved web signals, a
   deterministic risk rubric, and a human-approval gate.
-- **Release Risk Investigator** reviews bounded GitHub issue evidence and external signals before
-  recommending proceed, review, or hold. It has no repository write tool.
+- **Release Risk Investigator** reviews bounded GitHub PR/issue evidence and optional external
+  signals before recommending proceed, review, or hold. It has no repository write tool.
 - **Incident Response Coordinator** correlates a supplied incident record with GitHub evidence,
   prioritizes containment, and stops at the approval boundary rather than pretending to execute it.
 
@@ -108,16 +114,25 @@ contains four tool spans plus planner, model, evaluator, provenance, policy vers
 
 ## Controlled model comparisons
 
-The dashboard’s **New comparison** action opens the persisted experiment builder. Configure at least two provider keys, choose 20, 60, or all 218 cases, and review the call count before starting. A 20-case cohort is category-balanced: five research, five document, five support, and five extraction cases. Every candidate receives the same ordered IDs and each `AgentRun` retains its candidate link.
+The dashboard’s **New comparison** action opens the persisted release experiment builder. Configure
+at least two provider keys, select which model represents the current production baseline, choose
+20, 60, or all 218 cases, and review the call count before starting. A 20-case cohort contains four
+cases from each of GitHub release risk, research, documents, support, and extraction. Every
+candidate receives the same ordered IDs and each `AgentRun` retains its candidate link.
 
 ```bash
 curl -X POST http://localhost:8000/api/experiments \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: model-selection-2026-09-07' \
-  -d '{"name":"Production model selection","scenario_limit":20,"candidates":[{"provider":"openai"},{"provider":"anthropic"},{"provider":"gemini"}]}'
+  -d '{"name":"Production model selection","scenario_limit":20,"candidates":[{"provider":"openai","role":"baseline"},{"provider":"anthropic","role":"candidate"},{"provider":"gemini","role":"candidate"}]}'
 ```
 
-The result stores mean rubric quality, pass rate, correctness dimensions, p50/p95 latency, total and per-task cost, failure classes, and a candidate-by-candidate delta where the previous matching experiment included the same provider/model. The dashboard’s failure view exposes the task, model output, rationale, and rubric without exposing the hidden golden answer.
+The result stores mean rubric quality, pass rate, correctness dimensions, p50/p95 latency, total
+and per-task cost, and failure classes. It compares the best candidate directly with the explicitly
+selected current baseline and calculates `SHIP`, `SHIP_WITH_GUARDRAILS`, or `BLOCK` from measured
+quality, policy violations, unsupported sources, cost, and latency. Historical deltas remain scoped
+to prior experiments with the exact dataset version and scenario IDs. The failure view exposes the
+task, output, rationale, and rubric without exposing the hidden golden answer.
 
 Before queueing, the API enforces `EXPERIMENT_MAX_CALLS`, `EXPERIMENT_MAX_CONCURRENT`, and an estimated provider-spend ceiling. Every model call has a hard `PROVIDER_TIMEOUT_SECONDS` deadline. Tune the token estimate and provider price variables for your prompts and contracts; the limit is a guardrail, not an invoice.
 

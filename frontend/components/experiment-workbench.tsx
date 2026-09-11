@@ -27,6 +27,7 @@ type Props = {
 export function ExperimentWorkbench({ apiUrl, demoMode, onExperimentComplete }: Props) {
   const [providers, setProviders] = useState<ProviderAvailability[]>([]);
   const [selectedProviders, setSelectedProviders] = useState<Set<string>>(new Set());
+  const [baselineProvider, setBaselineProvider] = useState("");
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [experiment, setExperiment] = useState<Experiment | null>(null);
   const [failures, setFailures] = useState<ExperimentFailure[]>([]);
@@ -84,13 +85,11 @@ export function ExperimentWorkbench({ apiUrl, demoMode, onExperimentComplete }: 
         const history = (await experimentsResponse.json()) as Experiment[];
         setProviders(agentsPayload.providers);
         setExperiments(history);
-        setSelectedProviders(
-          new Set(
-            agentsPayload.providers
-              .filter((provider) => provider.configured && provider.provider !== "mock")
-              .map((provider) => provider.provider),
-          ),
+        const available = agentsPayload.providers.filter(
+          (provider) => provider.configured && provider.provider !== "mock",
         );
+        setSelectedProviders(new Set(available.map((provider) => provider.provider)));
+        setBaselineProvider(available[0]?.provider ?? "");
         if (history[0]) await loadExperiment(history[0].id, controller.signal);
         setError(null);
       } catch (caught) {
@@ -139,6 +138,11 @@ export function ExperimentWorkbench({ apiUrl, demoMode, onExperimentComplete }: 
       const next = new Set(current);
       if (next.has(provider)) next.delete(provider);
       else next.add(provider);
+      if (!next.has(baselineProvider)) {
+        setBaselineProvider(
+          providers.find((item) => next.has(item.provider))?.provider ?? "",
+        );
+      }
       return next;
     });
   };
@@ -156,14 +160,22 @@ export function ExperimentWorkbench({ apiUrl, demoMode, onExperimentComplete }: 
         },
         body: JSON.stringify({
           name,
-          dataset_version: "golden-v1",
+          dataset_version: "golden-v2",
           scenario_limit: scenarioLimit,
           repetitions: 1,
-          candidates: selected.map((provider) => ({
-            provider: provider.provider,
-            model: provider.model,
-            label: provider.model,
-          })),
+          candidates: [...selected]
+            .sort((left, right) =>
+              left.provider === baselineProvider ? -1 : right.provider === baselineProvider ? 1 : 0,
+            )
+            .map((provider) => ({
+              provider: provider.provider,
+              model: provider.model,
+              label:
+                provider.provider === baselineProvider
+                  ? `Current · ${provider.model}`
+                  : `Candidate · ${provider.model}`,
+              role: provider.provider === baselineProvider ? "baseline" : "candidate",
+            })),
         }),
       });
       if (!response.ok) {
@@ -258,7 +270,23 @@ export function ExperimentWorkbench({ apiUrl, demoMode, onExperimentComplete }: 
           </div>
         </fieldset>
         <fieldset>
-          <legend>2. Choose evaluation depth</legend>
+          <legend>2. Mark the model currently in production</legend>
+          <label className="experiment-name">
+            <span>Current baseline</span>
+            <select
+              value={baselineProvider}
+              onChange={(event) => setBaselineProvider(event.target.value)}
+            >
+              {selected.map((provider) => (
+                <option key={provider.provider} value={provider.provider}>
+                  {titleCase(provider.provider)} · {provider.model}
+                </option>
+              ))}
+            </select>
+          </label>
+        </fieldset>
+        <fieldset>
+          <legend>3. Choose evaluation depth</legend>
           <div className="cohort-options">
             {[20, 60, 218].map((limit) => (
               <button
@@ -322,10 +350,35 @@ export function ExperimentWorkbench({ apiUrl, demoMode, onExperimentComplete }: 
             </span>
           </div>
           {experiment.recommendation?.summary ? (
-            <div className="recommendation-callout">
+            <div className={`recommendation-callout decision-${experiment.recommendation.deployment_decision?.toLowerCase()}`}>
               <Icon name="check" />
-              <span><strong>Measured result</strong>{experiment.recommendation.summary}</span>
+              <span>
+                <strong>
+                  {experiment.recommendation.deployment_decision
+                    ? experiment.recommendation.deployment_decision.replaceAll("_", " ")
+                    : "Measured result"}
+                </strong>
+                {experiment.recommendation.summary}
+              </span>
             </div>
+          ) : null}
+          {experiment.recommendation?.comparison ? (
+            <div className="release-decision-grid" aria-label="Candidate versus current baseline">
+              <div><span>Quality delta</span><strong>{formatPercent(experiment.recommendation.comparison.quality_delta)}</strong></div>
+              <div><span>Pass-rate delta</span><strong>{formatPercent(experiment.recommendation.comparison.pass_rate_delta)}</strong></div>
+              <div><span>Unsupported sources</span><strong>{formatPercent(experiment.recommendation.comparison.hallucination_delta)}</strong></div>
+              <div><span>p95 latency delta</span><strong>{formatLatency(experiment.recommendation.comparison.latency_p95_delta_ms)}</strong></div>
+            </div>
+          ) : null}
+          {experiment.recommendation?.blocking_reasons?.length ? (
+            <ul className="release-reasons">
+              {experiment.recommendation.blocking_reasons.map((reason) => <li key={reason}>{reason}</li>)}
+            </ul>
+          ) : null}
+          {experiment.recommendation?.guardrails?.length ? (
+            <ul className="release-reasons guardrails">
+              {experiment.recommendation.guardrails.map((reason) => <li key={reason}>{reason}</li>)}
+            </ul>
           ) : null}
           <div className="experiment-table" role="table" aria-label="Experiment candidates">
             <div className="experiment-row experiment-table-head" role="row">

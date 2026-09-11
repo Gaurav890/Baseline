@@ -161,6 +161,97 @@ def test_tavily_and_github_normalize_evidence_and_provenance() -> None:
     assert issues.data["issues"][0]["labels"] == ["bug"]
 
 
+def test_github_pull_request_collects_read_only_release_evidence() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        assert request.headers["authorization"] == "Bearer github-secret"
+        if request.url.path.endswith("/pulls/7"):
+            return httpx.Response(
+                200,
+                json={
+                    "number": 7,
+                    "title": "Harden authentication",
+                    "state": "open",
+                    "draft": False,
+                    "merged": False,
+                    "mergeable": True,
+                    "mergeable_state": "unstable",
+                    "user": {"login": "contributor"},
+                    "head": {"sha": "a" * 40},
+                    "base": {"ref": "main"},
+                    "html_url": "https://github.com/example/repo/pull/7",
+                    "url": "https://api.github.com/repos/example/repo/pulls/7",
+                    "changed_files": 2,
+                },
+            )
+        if request.url.path.endswith("/pulls/7/files"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"filename": "src/auth/token.py", "status": "modified"},
+                    {"filename": "tests/test_token.py", "status": "added"},
+                ],
+            )
+        if request.url.path.endswith("/pulls/7/reviews"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "state": "APPROVED",
+                        "user": {"login": "reviewer"},
+                        "submitted_at": "2026-01-01T00:00:00Z",
+                    }
+                ],
+            )
+        if request.url.path.endswith(f"/commits/{'a' * 40}/check-runs"):
+            return httpx.Response(
+                200,
+                json={
+                    "check_runs": [
+                        {
+                            "name": "tests",
+                            "status": "completed",
+                            "conclusion": "failure",
+                            "details_url": "https://github.com/example/repo/actions/runs/1",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"Unexpected path: {request.url.path}")
+
+    github = GitHubConnector(
+        token="github-secret",
+        http=_client(httpx.MockTransport(handler), domains=("api.github.com",)),
+    )
+    result = github.execute(
+        {"repository": "example/repo", "operation": "pull_request", "pull_number": 7}
+    )
+
+    assert paths == [
+        "/repos/example/repo/pulls/7",
+        "/repos/example/repo/pulls/7/files",
+        "/repos/example/repo/pulls/7/reviews",
+        f"/repos/example/repo/commits/{'a' * 40}/check-runs",
+    ]
+    assert result.data["authenticated"] is True
+    assert result.data["summary"] == {
+        "file_count": 2,
+        "test_files_changed": True,
+        "security_sensitive_files": ["src/auth/token.py"],
+        "review_count": 1,
+        "approvals": 1,
+        "changes_requested": 0,
+        "check_count": 1,
+        "successful_checks": 0,
+        "failed_checks": ["tests"],
+        "pending_checks": [],
+    }
+    assert result.metadata.provenance is Provenance.LIVE
+    assert len(result.metadata.content_hash) == 64
+
+
 def test_snapshot_validates_source_urls_and_never_claims_live() -> None:
     connector = SourcePacketConnector()
     result = connector.execute(

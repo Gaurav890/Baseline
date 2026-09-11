@@ -33,7 +33,7 @@ production-shaped agents exercise the same runtime with four-step plans:
 
 ```text
 Due diligence:    SEC identity ──> web signals ──> risk rubric ──> approval gate
-Release risk:     GitHub issues ─> web signals ──> risk rubric ──> approval gate
+Release risk:     GitHub PR packet ─> optional web ─> risk rubric ─> approval gate
 Incident response: incident ─────> GitHub issue ─> risk rubric ──> approval gate
 ```
 
@@ -69,7 +69,8 @@ All external evidence implements one connector result contract. The production c
 
 - `sec_edgar`: public SEC submissions/company-facts endpoints, a declared contact user-agent, and configurable fair-access pacing (4 requests/second per process by default);
 - `tavily`: keyed search, absent/unconfigured without `TAVILY_API_KEY`;
-- `github`: public REST issues by default, optionally authenticated using `GITHUB_TOKEN`;
+- `github`: public REST issues plus bounded PR/files/reviews/check-run packets, optionally
+  authenticated using `GITHUB_TOKEN`;
 - `url_fetch`: HTTPS retrieval restricted by the configured domain allowlist and address validation;
 - `source_packet`: deterministic caller-supplied/frozen evidence, enabled for controlled local/CI paths.
 
@@ -90,20 +91,37 @@ Production clients poll job status/results, so HTTP request lifetimes do not con
 
 ### Controlled comparison invariant
 
-An experiment resolves its scenario IDs once, before it is queued. Small cohorts are selected deterministically across all four work categories. The worker iterates every candidate over that same ordered list and persists `AgentRun.experiment_candidate_id`; results therefore never mix models, dataset versions, scenario sets, or unrelated dates. The automatic baseline is the newest completed experiment with the identical dataset version and scenario ID list. Provider/model deltas are shown only when that same candidate identity exists in the baseline.
+An experiment resolves its scenario IDs once, before it is queued. Small cohorts are selected
+deterministically across five work categories, including GitHub release risk. One candidate is
+persisted with the `baseline` role and every other candidate uses the `candidate` role. The worker
+iterates every candidate over the same ordered list and persists `AgentRun.experiment_candidate_id`;
+results therefore never mix models, dataset versions, scenario sets, or unrelated dates. The
+deployment recommendation compares the strongest candidate with the selected current baseline.
+Historical provider/model deltas are shown only when the newest completed experiment used the
+identical dataset version and scenario ID list.
 
-The category evaluator is intentionally different by work type: extraction requires strict typed fields, support requires the ticket/resolution/escalation contract, document evaluation checks facts and summary coverage, and research accepts grounded semantic coverage rather than requiring one exact JSON layout. The prompt still requests an exact schema so provider formatting differences do not dominate the score.
+The category evaluator is intentionally different by work type: extraction requires strict typed
+fields, support requires the ticket/resolution/escalation contract, document evaluation checks facts
+and summary coverage, research accepts grounded semantic coverage, and release risk checks PR facts
+plus the policy decision. Tool evaluation requires evidence steps and forbids unsafe actions without
+demanding one exact valid path. The prompt still requests an exact schema so provider formatting
+differences do not dominate the score.
 
 ## Golden snapshots and canaries
 
 The blocking catalog remains exactly 218 scenarios:
 
-- 55 research (including 20 frozen public-source snapshots)
+- 12 GitHub pull-request release-risk cases from frozen public API evidence
+- 43 research (including 20 frozen public-source snapshots)
 - 55 document analysis
 - 54 support/multi-tool
 - 54 structured extraction
 
-`backend/app/evals/snapshots/public_sources.v1.json` records primary SEC and GitHub API URLs, one UTC retrieval time, hashes of the full downloaded response bodies, and the selected fields used by the oracles. Those `SNAPSHOT` scenarios are immutable regression inputs and safe for deterministic CI. Source bodies were retrieved directly on 2026-09-06; future upstream changes do not mutate the fixture.
+`backend/app/evals/snapshots/public_sources.v1.json` records primary SEC and GitHub issue evidence.
+`backend/app/evals/snapshots/github_pull_requests.v1.json` records three public PR evidence bundles
+covering PR state, changed files, reviews, and checks, producing twelve outcome/policy cases. Those
+`SNAPSHOT` scenarios are immutable regression inputs and safe for deterministic CI; future upstream
+changes do not mutate the fixtures.
 
 `LIVE_CANARIES` are a separate non-blocking catalog. They test current connectivity and schema drift, may fail because of rate limits or upstream outages, and are never counted among the 218 merge-gating scenarios. A live canary result may be marked `LIVE` only after retrieval succeeds.
 

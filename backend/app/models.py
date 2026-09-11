@@ -268,6 +268,7 @@ class ExperimentCandidate(Base):
         ForeignKey("experiments.id", ondelete="CASCADE"), index=True
     )
     label: Mapped[str] = mapped_column(String(160))
+    role: Mapped[str] = mapped_column(String(24), default="candidate", index=True)
     provider: Mapped[str] = mapped_column(String(32), index=True)
     model: Mapped[str] = mapped_column(String(128), index=True)
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)

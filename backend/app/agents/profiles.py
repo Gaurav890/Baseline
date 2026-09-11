@@ -129,23 +129,25 @@ AGENT_PROFILES: dict[str, AgentProfile] = {
         id="release_risk",
         name="Release Risk Investigator",
         description=(
-            "Triages repository issues and external signals before a production release decision."
+            "Evaluates pull requests, reviews, checks, changed files, and optional external "
+            "signals."
         ),
         instructions=(
             "Act as a release-risk investigator. Use only retrieved GitHub and approved web "
-            "evidence, identify blocking issues, explain uncertainty, and recommend go, hold, or "
-            "human review. Do not change repository state."
+            "evidence, distinguish missing evidence from passing evidence, identify blocking "
+            "conditions, and recommend proceed, hold, or human review. Never change repository "
+            "state."
         ),
         tools=("github_issue_lookup", "web_intelligence", "risk_assessment", "policy_check"),
         accent="#b64b77",
         complexity="multi-source workflow",
         business_value="Makes release readiness explainable before CI reports a final check.",
         example_task=(
-            "Review a repository's issue evidence and public security signals, then produce an "
-            "auditable go/hold recommendation."
+            "Review a pull request's files, approvals, and CI results, then produce an auditable "
+            "release recommendation."
         ),
         workflow=(
-            ("Inspect repository", "Retrieve bounded GitHub issue evidence."),
+            ("Inspect change", "Retrieve bounded PR, file, review, and check evidence."),
             ("Check external signals", "Search approved web sources for relevant risk."),
             ("Classify blockers", "Score severity, evidence coverage, and uncertainty."),
             ("Gate release", "Escalate high-risk or costly action to a person."),
@@ -220,7 +222,10 @@ def choose_tools(agent_type: str, task: str) -> list[str]:
     if agent_type == "due_diligence":
         return ["sec_company_lookup", "web_intelligence", "risk_assessment", "policy_check"]
     if agent_type == "release_risk":
-        return ["github_issue_lookup", "web_intelligence", "risk_assessment", "policy_check"]
+        tools = ["github_issue_lookup"]
+        if any(word in lower for word in ("external", "advisory", "public security")):
+            tools.append("web_intelligence")
+        return [*tools, "risk_assessment", "policy_check"]
     if agent_type == "incident_response":
         return ["incident_context", "github_issue_lookup", "risk_assessment", "policy_check"]
     raise ValueError(f"Unknown agent type: {agent_type}")

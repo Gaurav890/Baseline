@@ -40,7 +40,7 @@ def test_golden_scenarios_are_paginated_and_do_not_expose_answer_keys(client: Te
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["total"] == 55
+    assert payload["total"] == 43
     assert len(payload["items"]) == 3
     assert set(payload["items"][0]) == {
         "id",
@@ -51,6 +51,11 @@ def test_golden_scenarios_are_paginated_and_do_not_expose_answer_keys(client: Te
         "fixture_kind",
         "blocking",
         "dataset_version",
+        "oracle_type",
+        "success_criteria",
+        "forbidden_tools",
+        "provenance",
+        "source_urls",
     }
     assert payload["items"][0]["category"] == "research"
 
@@ -131,13 +136,21 @@ def test_persisted_experiment_compares_the_exact_same_cohort(client: TestClient)
     assert experiment["id"] == second.json()["id"]
     assert experiment["status"] == "completed"
     assert experiment["scenario_ids"] == [
+        "release-risk-001",
         "research-001",
         "document-001",
         "support-001",
-        "extraction-001",
     ]
     assert {candidate["run_count"] for candidate in experiment["candidates"]} == {4}
     assert {candidate["quality"] for candidate in experiment["candidates"]} == {1}
+    assert [candidate["role"] for candidate in experiment["candidates"]] == [
+        "baseline",
+        "candidate",
+    ]
+    assert experiment["recommendation"]["deployment_decision"] == "SHIP"
+    assert experiment["recommendation"]["baseline_candidate_id"] == (
+        experiment["candidates"][0]["id"]
+    )
     assert client.get(f"/api/experiments/{experiment['id']}/failures").json()["total"] == 0
 
     runs = client.get("/api/runs?limit=20").json()
@@ -195,7 +208,10 @@ def test_run_captures_full_trace_and_evaluation(client: TestClient) -> None:
         "model",
         "evaluator",
     }
-    assert run["planner_output"]["steps"][0]["tool"] == "web_search"
+    assert run["planner_output"]["steps"][0]["tool"] == "github_issue_lookup"
+    tool_spans = [span for span in run["spans"] if span["kind"] == "tool"]
+    assert tool_spans[0]["attributes"]["connector"] == "github_snapshot"
+    assert tool_spans[0]["attributes"]["provenance"] == "SNAPSHOT"
 
 
 def test_human_review_round_trip(client: TestClient) -> None:
