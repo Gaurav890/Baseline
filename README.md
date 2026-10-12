@@ -1,31 +1,118 @@
-# baseline
+# Baseline
 
-**The reliability control plane for AI agents.**
+<p align="center">
+  <strong>The evidence control plane for production AI agents.</strong><br>
+  Test the same scenarios across models, inspect what every agent used, and make deployment decisions from evidence instead of demos.
+</p>
 
-Baseline is a FastAPI and Next.js platform for running agents, recording evidence-rich traces, comparing models, and gating changes against exactly 218 regression scenarios.
+<p align="center">
+  <a href="https://github.com/Gaurav890/baseline/actions/workflows/evals.yml"><img alt="CI" src="https://github.com/Gaurav890/baseline/actions/workflows/evals.yml/badge.svg"></a>
+  <a href="https://github.com/Gaurav890/baseline/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Gaurav890/baseline?style=social"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-171611"></a>
+  <img alt="Golden scenarios: 218" src="https://img.shields.io/badge/golden_scenarios-218-f15a2a">
+</p>
 
-![Baseline dashboard overview](docs/dashboard-preview.svg)
+[![Watch the 23-second Baseline overview](docs/media/baseline-poster.jpg)](docs/media/baseline-demo.mp4?raw=1)
 
-_Design preview with synthetic values; the production UI never substitutes these for API data._
+<p align="center">
+  <a href="docs/media/baseline-demo.mp4?raw=1"><strong>▶ Watch the 23-second product overview</strong></a>
+  ·
+  <a href="#quick-start"><strong>Run it locally</strong></a>
+  ·
+  <a href="docs/architecture.md"><strong>Read the architecture</strong></a>
+</p>
 
-## Production behavior
+<p align="center">
+  <small>Music: <a href="https://ende.app/en/song/12876-happy-beats-business-moves-vol-11">“Happy Beats &amp; Business Moves Vol. 11”</a> by Sascha Ende, licensed under <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.</small>
+</p>
 
-Production never seeds or substitutes fabricated metrics. `DEMO_MODE=false` and `NEXT_PUBLIC_DEMO_MODE=false` are the defaults; an empty database renders an honest empty state and an unavailable API renders a connection error. The backend rejects demo mode, fixture connectors, SQLite, inline jobs, HTTP frontend origins, or a missing SEC contact identity when `ENVIRONMENT=production`.
+> If this project helps you build more reliable agents, [star the repository](https://github.com/Gaurav890/baseline) so other builders can find it.
 
-Every connector observation carries its source URL, retrieval time, content SHA-256, connector name, latency, and `LIVE`, `SNAPSHOT`, or `SYNTHETIC` provenance. The dashboard labels a source `LIVE` only after a successful health check.
+## What Baseline answers
 
-## Run locally
+Most agent demos answer: **“Can it work once?”**
+
+Baseline answers the questions that appear before a real deployment:
+
+| Question | What Baseline provides |
+| --- | --- |
+| Which model should we use? | Controlled experiments where every candidate receives the same immutable scenario IDs. |
+| Did the new version regress? | A release gate against exactly 218 versioned golden scenarios and a real previous experiment. |
+| Why did the agent produce this answer? | Evidence-rich traces with source URL, retrieval time, content hash, connector, latency, and provenance. |
+| Are those sources actually live? | Persisted connector health checks; configuration alone is never displayed as `LIVE`. |
+| What is failing in production? | Trace ingestion, sampled online checks, user feedback, and a human-review queue. |
+| How does a failure become a test? | Reviewed production failures can be promoted into immutable candidate dataset versions. |
+| Can the agent exceed its authority? | Versioned policies for scope, tools, mutation, budget, runtime, approval, and audit events. |
+| Should this pull request ship? | A verified GitHub webhook contract that can publish an evaluation check on the PR head SHA. |
+
+## The production reliability loop
+
+```mermaid
+flowchart LR
+    A[Observe production traces] --> B[Evaluate sampled outcomes]
+    B --> C[Review failures]
+    C --> D[Promote useful failures]
+    D --> E[Compare models on identical cases]
+    E --> F{Release decision}
+    F -->|SHIP| G[Deploy]
+    F -->|GUARDRAILS| H[Constrain and re-test]
+    F -->|BLOCK| C
+    G --> A
+```
+
+Baseline connects offline evaluation, online signals, model comparison, agent safety, and release checks in one inspectable system. It keeps deterministic regression snapshots separate from non-blocking live canaries, so an upstream outage cannot silently corrupt the release gate.
+
+## What is included
+
+- **Controlled model comparisons** — persisted experiments across OpenAI, Anthropic, and Gemini candidates using the same scenario cohort.
+- **A real golden catalog** — exactly 218 blocking scenarios, including 32 versioned snapshots derived from public SEC and GitHub data and 12 public GitHub pull-request cases.
+- **Evidence-aware agents** — research, document, support, extraction, due diligence, release-risk, and incident-response workflows.
+- **Production feedback** — trace ingestion, sampled online evaluators, user feedback, human review, and dataset promotion.
+- **Agent safety controls** — scope, authority, budget, verification, containment, and auditability enforced in the runner.
+- **Production connectors** — SEC EDGAR, Tavily, GitHub, and protected HTTPS retrieval with provenance metadata.
+- **Durable evaluation jobs** — idempotent job creation, PostgreSQL state, Redis delivery, leases, renewal, and bounded retries.
+- **Deployment contracts** — Vercel frontend plus Render API, worker, PostgreSQL, and Redis definitions.
+
+## See it in three minutes
+
+After starting the project, open [http://localhost:3000](http://localhost:3000) and follow this path:
+
+1. **Data sources** — run a connector check and see the difference between configured, healthy, and proven live.
+2. **Golden datasets** — browse the fixed release cases without exposing hidden answers.
+3. **Model comparison** — select two or more configured providers and run the same cases against each candidate.
+4. **Evidence traces** — inspect tool calls, hashes, latency, and `LIVE`, `SNAPSHOT`, or `SYNTHETIC` provenance.
+5. **Human review** — see how negative feedback and failed evaluations become review work and candidate tests.
+6. **Workflow Lab** — inspect multi-step due-diligence, release-risk, and incident-response examples.
+7. **Agent safety** — review the policy boundary and the gaps the platform deliberately does not pretend to solve.
+
+## Quick start
+
+Requirements: Docker Desktop and Docker Compose.
 
 ```bash
+git clone https://github.com/Gaurav890/baseline.git
+cd baseline
 cp .env.example .env
 docker compose up --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000); API docs are at [http://localhost:8000/docs](http://localhost:8000/docs). Local mode starts empty. To preview synthetic data explicitly, set both `DEMO_MODE=true` and `NEXT_PUBLIC_DEMO_MODE=true`.
+Then open:
 
-The Docker API runs migrations before startup. For local volumes created by an older build before Alembic existed, a development-only bootstrap recognizes the original table set, stamps revision `0001_initial_schema`, and upgrades it. It refuses unknown schemas and is never allowed to stamp a production database.
+- Dashboard: [http://localhost:3000](http://localhost:3000)
+- API documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Liveness: [http://localhost:8000/health/live](http://localhost:8000/health/live)
+- Readiness: [http://localhost:8000/health/ready](http://localhost:8000/health/ready)
 
-Without Docker:
+Local mode starts empty. To load the explicitly synthetic showcase, set both values below and restart:
+
+```dotenv
+DEMO_MODE=true
+NEXT_PUBLIC_DEMO_MODE=true
+```
+
+Production rejects demo mode, fixture connectors, SQLite, inline jobs, insecure frontend origins, and a missing SEC contact identity. It never silently substitutes demo metrics when the API is empty or unavailable.
+
+### Run without Docker
 
 ```bash
 cd backend
@@ -34,39 +121,115 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
 ```
 
+In a second terminal:
+
 ```bash
 cd frontend
 npm ci
 npm run dev
 ```
 
-For deterministic connector fixtures in tests only, set both `ENVIRONMENT=test` and `BASELINE_FIXTURE_CONNECTORS=true`. Production validation rejects fixture mode.
+## Configure real evidence and models
 
-### Plain-English dashboard terms
+Baseline works without paid provider keys when you use the deterministic mock provider. Add only the integrations you want to exercise.
 
-- Golden dataset: fixed "quality checklist" of 218 test cases used for reliability checks. You can browse task names, but not answers, so scoring stays fair.
-- Evaluation suite: a batch run over test cases that produces pass/fail, cost, and latency.
-- Model experiment: two to four models run the exact same immutable scenario IDs. The comparison is one controlled cohort, not an aggregate of unrelated history.
-- Baseline: the most recent completed experiment with the same dataset version and exact scenario IDs. A first run honestly shows “No baseline.”
-- Live sources: the sources marked as LIVE are those successfully verified against real connectors.
-- Workflow Lab: six non-blocking, multi-step examples that show how three complex agents gather
-  evidence, apply risk and authority rules, and return typed business decisions. They are kept
-  separate from the release gate on purpose.
+| Integration | Required configuration | Purpose |
+| --- | --- | --- |
+| SEC EDGAR | `SEC_USER_AGENT="Baseline Reliability your-email@gmail.com"` | Public submissions and company facts; no API key required. |
+| GitHub | Optional `GITHUB_TOKEN` | Public issues and bounded PR evidence; a token raises limits or grants explicitly scoped private access. |
+| Tavily | `TAVILY_API_KEY` | Allowlisted web search. |
+| OpenAI | `OPENAI_API_KEY` | Model candidate for experiments and runs. |
+| Anthropic | `ANTHROPIC_API_KEY` | Model candidate for experiments and runs. |
+| Gemini | `GEMINI_API_KEY` | Model candidate for experiments and runs. |
 
-## Connectors and provenance
+Check a configured connector instead of assuming it works:
 
-- SEC EDGAR uses the public submissions and company-facts APIs without a key. Set `SEC_USER_AGENT` to an application name plus monitored email address. `SEC_REQUESTS_PER_SECOND` defaults to 4 per process so the default API-plus-worker topology remains below the SEC's published 10-request/second ceiling.
-- Tavily is configured only when `TAVILY_API_KEY` is present.
-- GitHub reads public issues and bounded pull-request evidence (PR facts, changed files, reviews,
-  and check runs) anonymously, or uses `GITHUB_TOKEN` for higher limits/private access explicitly
-  granted to the token. The connector is read-only.
-- Direct URL retrieval is HTTPS-only, resolves and rejects private/link-local/reserved targets, follows only allowlisted hosts, enforces response limits and timeouts, and retries transient failures with backoff.
+```bash
+curl -X POST http://localhost:8000/api/integrations/sec_edgar/check
+curl -X POST http://localhost:8000/api/integrations/github/check
+curl -X POST http://localhost:8000/api/integrations/tavily/check
+```
 
-The data-source panel reports configured state, last successful check, event count, and provenance. “Configured” is not treated as proof of connectivity.
+The dashboard labels a source `LIVE` only after a successful check. Every retrieved observation records its URL, timestamp, SHA-256 hash, connector, latency, and provenance.
 
-## Evaluation jobs
+## Run a controlled model comparison
 
-Regression and benchmark runs use a persistent job contract. Local/tests use the synchronous `inline` backend; production uses the API plus Redis-backed worker.
+The dashboard’s **New comparison** action is the easiest path. Configure at least two provider keys, select the current production baseline, choose 20, 60, or all 218 cases, and review the estimated call count before starting.
+
+The API contract is also available directly:
+
+```bash
+curl -X POST http://localhost:8000/api/experiments \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: model-selection-2026-10-10' \
+  -d '{
+    "name":"Production model selection",
+    "scenario_limit":20,
+    "candidates":[
+      {"provider":"openai","role":"baseline"},
+      {"provider":"anthropic","role":"candidate"},
+      {"provider":"gemini","role":"candidate"}
+    ]
+  }'
+```
+
+The result stores rubric quality, pass rate, correctness dimensions, p50/p95 latency, cost, and failure classes. The deployment recommendation is calculated from measured quality, policy violations, unsupported sources, latency, and cost:
+
+- `SHIP`
+- `SHIP_WITH_GUARDRAILS`
+- `BLOCK`
+
+A first experiment honestly reports **No baseline**. Historical deltas are used only when the dataset version and ordered scenario IDs match exactly.
+
+## Golden datasets, snapshots, and canaries
+
+The 218-case blocking catalog stays deterministic:
+
+| Category | Scenarios |
+| --- | ---: |
+| GitHub release risk | 12 |
+| Research | 43 |
+| Document analysis | 55 |
+| Support and multi-tool | 54 |
+| Structured extraction | 54 |
+| **Total** | **218** |
+
+Thirty-two cases are frozen from primary public SEC and GitHub payloads. Their source URLs, selected fields, retrieval timestamps, and response hashes live under [`backend/app/evals/snapshots/`](backend/app/evals/snapshots/).
+
+Live SEC and GitHub canaries are intentionally separate and non-blocking. They detect connectivity and schema drift without changing deterministic CI results.
+
+## Architecture
+
+```text
+Browser ──HTTPS──> Next.js / Vercel
+                       │
+                       └──HTTPS──> FastAPI / Render ──> PostgreSQL
+                                               │
+                                               └──Redis──> Evaluation worker
+                                                              │
+                                    SEC / GitHub / Tavily <────┘
+```
+
+FastAPI owns validation, persistence, safety decisions, webhook verification, and job creation. The worker owns long-running regression and experiment execution. PostgreSQL is canonical state; Redis is delivery infrastructure, not a result store.
+
+Read the complete [architecture and trust-boundary documentation](docs/architecture.md).
+
+## Agent safety model
+
+Every registered agent has a persisted policy that controls:
+
+- allowed tools and external mutation;
+- maximum tool calls and wall-clock runtime;
+- estimated model-spend ceiling;
+- approval requirements;
+- an environment-wide execution kill switch;
+- append-only safety events linked to the policy version and run.
+
+The current tool registry is non-mutating and does not execute arbitrary code. The posture endpoint honestly reports sandbox isolation, covert-channel detection, authenticated workspaces, and retention automation as incomplete where they are not implemented.
+
+## Production jobs and PR checks
+
+Long evaluations use a persistent, idempotent job contract. Local development uses the same state machine inline; production uses Redis-backed workers with leases and bounded retries.
 
 ```bash
 curl -X POST http://localhost:8000/api/evaluation-jobs \
@@ -75,164 +238,104 @@ curl -X POST http://localhost:8000/api/evaluation-jobs \
   -d '{"kind":"regression","regression":{"provider":"mock","limit":218,"threshold":0.01}}'
 ```
 
-Poll `GET /api/evaluation-jobs/{id}` and read `GET /api/evaluation-jobs/{id}/results`. Reusing a key with the same payload returns the original job; reusing it with a different payload is rejected. Headerless requests use a canonical-payload key scoped to the UTC hour, but callers should send an explicit stable key. Run the production worker with `python -m app.jobs.worker`.
+Poll `GET /api/evaluation-jobs/{id}` and read `GET /api/evaluation-jobs/{id}/results`.
 
-Redis workers claim jobs with expiring leases, renew the lease while work runs, and retry up to `JOB_MAX_ATTEMPTS`. An idle worker requeues abandoned or queued jobs; database-side atomic claims make duplicate Redis deliveries harmless. Local inline execution uses the same retry state machine.
+<details>
+<summary><strong>Configure GitHub pull-request evaluation checks</strong></summary>
 
-The checked-in gate remains deterministic:
+No GitHub App is created by this repository. Create one owned by the target organization or account:
 
-```bash
-cd backend
-ENVIRONMENT=test BASELINE_FIXTURE_CONNECTORS=true uv run python -m app.evals.cli --provider mock --all --threshold 0.01
-```
+1. Grant **Pull requests: Read-only**, **Checks: Read and write**, and **Metadata: Read-only**.
+2. Subscribe only to **Pull request** events.
+3. Set the webhook URL to `https://<api-host>/api/webhooks/github`.
+4. Generate a strong webhook secret, select `application/json`, and keep SSL verification enabled.
+5. Install the App only on repositories that should run evaluations.
+6. Set `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, and the exact `GITHUB_REPOSITORY_ALLOWLIST=owner/repository`.
+7. Configure `GITHUB_EVALUATION_PROVIDER` and optionally `GITHUB_EVALUATION_MODEL` to the real candidate used by the product.
+8. Enable `GITHUB_CHECKS_ENABLED=true` only after the complete setup is deployed to both API and worker.
 
-Thirty-two of the 218 blocking scenarios are frozen, versioned snapshots derived from primary SEC
-and GitHub API payloads. Twelve exercise real public GitHub pull-request packets containing PR
-facts, changed paths, reviews, and CI check results. Retrieval timestamps, source URLs, selected
-fields, and response hashes are checked in under `backend/app/evals/snapshots/`. Live SEC/GitHub
-canaries are separate, do not belong to the golden catalog, and never block CI.
+The endpoint verifies `X-Hub-Signature-256`, bounds payload size, validates delivery IDs, filters event/action types, and rejects repositories outside the allowlist. Installation tokens are short-lived. A configured `GITHUB_TOKEN` is only a fallback and must have Checks write access.
 
-## Complex workflow showcase
+</details>
 
-The dashboard's **Workflow Lab** presents three additional production-shaped agents:
-
-- **Company Due Diligence Analyst** combines SEC identity evidence, approved web signals, a
-  deterministic risk rubric, and a human-approval gate.
-- **Release Risk Investigator** reviews bounded GitHub PR/issue evidence and optional external
-  signals before recommending proceed, review, or hold. It has no repository write tool.
-- **Incident Response Coordinator** correlates a supplied incident record with GitHub evidence,
-  prioritizes containment, and stops at the approval boundary rather than pretending to execute it.
-
-Their six `workflow-showcase-v1` cases reuse the versioned public SEC/GitHub snapshots and label
-training-only business signals as `SYNTHETIC`. They are deterministic with the mock provider and
-can use live SEC, GitHub, or Tavily connectors when a caller supplies live context. They remain
-`blocking=false`, so expanding the portfolio does not silently dilute the fixed 218-case gate.
-
-Inspect the public contracts at `GET /api/workflows`. Execute a showcase case through the existing
-`POST /api/runs` contract with its `agent_type`, task, context, and `scenario_id`; the resulting trace
-contains four tool spans plus planner, model, evaluator, provenance, policy version, cost, and timing.
-
-## Controlled model comparisons
-
-The dashboard’s **New comparison** action opens the persisted release experiment builder. Configure
-at least two provider keys, select which model represents the current production baseline, choose
-20, 60, or all 218 cases, and review the call count before starting. A 20-case cohort contains four
-cases from each of GitHub release risk, research, documents, support, and extraction. Every
-candidate receives the same ordered IDs and each `AgentRun` retains its candidate link.
-
-```bash
-curl -X POST http://localhost:8000/api/experiments \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: model-selection-2026-09-07' \
-  -d '{"name":"Production model selection","scenario_limit":20,"candidates":[{"provider":"openai","role":"baseline"},{"provider":"anthropic","role":"candidate"},{"provider":"gemini","role":"candidate"}]}'
-```
-
-The result stores mean rubric quality, pass rate, correctness dimensions, p50/p95 latency, total
-and per-task cost, and failure classes. It compares the best candidate directly with the explicitly
-selected current baseline and calculates `SHIP`, `SHIP_WITH_GUARDRAILS`, or `BLOCK` from measured
-quality, policy violations, unsupported sources, cost, and latency. Historical deltas remain scoped
-to prior experiments with the exact dataset version and scenario IDs. The failure view exposes the
-task, output, rationale, and rubric without exposing the hidden golden answer.
-
-Before queueing, the API enforces `EXPERIMENT_MAX_CALLS`, `EXPERIMENT_MAX_CONCURRENT`, and an estimated provider-spend ceiling. Every model call has a hard `PROVIDER_TIMEOUT_SECONDS` deadline. Tune the token estimate and provider price variables for your prompts and contracts; the limit is a guardrail, not an invoice.
-
-## Production feedback loop
-
-Production systems can import completed traces through `POST /api/traces/ingest` using a secret `X-Ingest-Key`. Imports are idempotent by `external_trace_id`, redact secret-bearing fields and email addresses, and label imported spans `SNAPSHOT` rather than pretending the API independently verified them as live. `ONLINE_EVAL_SAMPLE_RATE` deterministically samples traces for a completion-only online check; its rubric explicitly does not claim answer correctness.
-
-User feedback is recorded at `POST /api/runs/{id}/feedback`. Negative feedback, failed runs, and failed evaluations enter `GET /api/review-queue` until a human review exists. A reviewed production failure can be copied into an immutable candidate dataset version with `POST /api/runs/{id}/promote`; this never mutates the 218-case blocking catalog automatically.
-
-The dashboard’s **Human review** section makes that queue understandable to operators, records named pass/fail/needs-review decisions, and shows the resulting candidate dataset versions. A `needs_review` note deliberately leaves the run open; only a final pass or fail clears it.
-
-The dashboard’s live-canary section calls `POST /api/canaries/run` on demand and displays persisted SEC/GitHub outcomes. These checks are current and non-blocking; failed connectivity cannot corrupt deterministic regression results.
-
-## Agent safety control plane
-
-The dashboard’s **Agent safety** section separates six concerns: scope, authority, budget, verification, containment, and auditability. Seven persisted agent policies enforce the tool allowlist, mutating-tool permission, maximum tool calls, wall-clock deadline, preflight model-cost ceiling, and approval threshold for each work type. The runner attaches the policy ID/version to the root trace and records every plan/tool decision as a `SafetyEvent`; raw policy inputs are represented by a SHA-256 hash rather than duplicated into the decision ledger.
-
-Set `AGENT_EXECUTION_ENABLED=false` to stop new agent work throughout an API/worker environment. Safety policy administration is machine-to-machine and requires `X-Safety-Admin-Key`; never put `SAFETY_ADMIN_KEY` in a `NEXT_PUBLIC_*` variable.
-
-```bash
-curl -X PATCH http://localhost:8000/api/safety/policies/support \
-  -H 'Content-Type: application/json' \
-  -H "X-Safety-Admin-Key: $SAFETY_ADMIN_KEY" \
-  -d '{"max_tool_calls":3,"max_runtime_seconds":30,"max_estimated_cost_usd":0.50}'
-```
-
-The posture endpoint intentionally reports isolated execution sandboxing, covert-channel detection, and authenticated workspace roles as `not_implemented`. Current registered tools do not execute arbitrary code and are non-mutating; URL retrieval is still restricted by the connector containment boundary. This is an enforceable first layer, not a claim of frontier-model containment.
-
-## GitHub PR evaluation checks
-
-No GitHub App is created or registered by this repository. Perform these steps in GitHub:
-
-1. Create a GitHub App owned by the target organization or account.
-2. Grant repository permissions **Pull requests: Read-only**, **Checks: Read and write**, and **Metadata: Read-only**. Do not grant Contents write, Administration, or organization permissions.
-3. Subscribe only to **Pull request** events.
-4. Set the webhook URL to `https://<api-host>/api/webhooks/github`, generate a strong random webhook secret, select `application/json`, and enable SSL verification.
-5. Install the App only on the repositories that should run evaluations.
-6. Set `GITHUB_WEBHOOK_SECRET`, `GITHUB_APP_ID`, the PEM `GITHUB_PRIVATE_KEY`, and an exact comma-separated `GITHUB_REPOSITORY_ALLOWLIST=owner/repo`. Set `GITHUB_EVALUATION_PROVIDER` and optionally `GITHUB_EVALUATION_MODEL` to the real candidate used by your product. The worker exchanges the installation ID for short-lived tokens. `GITHUB_TOKEN` is a fallback that must have Checks write access. Then set `GITHUB_CHECKS_ENABLED=true` and redeploy both API and worker.
-7. Send GitHub’s ping and open or update a test pull request. Confirm the API accepts the signed delivery once, creates one idempotent job, and publishes the configured check name on the head SHA.
-
-The endpoint verifies `X-Hub-Signature-256` over the raw body, bounds payload size, validates delivery IDs, filters event/action types, and rejects repositories outside the allowlist. Use a secret manager and rotate the webhook secret and App private key regularly.
-
-The PR result compares the configured provider/model against the latest persisted regression suite for that exact provider, model, and scenario count. If none exists, the first check reports no baseline and cannot claim a regression. The synthetic provider is rejected for enabled production checks.
-
-## API surface
+## API at a glance
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /health/live` | Process liveness |
-| `GET /health/ready` | Database and queue readiness |
 | `GET /api/dashboard` | Observed quality, operations, benchmarks, and suite history |
-| `GET /api/agents` / `GET /api/workflows` | Agent contracts and non-blocking complex workflow catalog |
-| `GET /api/safety` | Active agent contracts, containment configuration, gaps, and decision events |
-| `PATCH /api/safety/policies/{agent_type}` | Admin-key-protected safety policy update |
+| `GET /api/agents` / `GET /api/workflows` | Agent contracts and complex workflow catalog |
 | `GET /api/integrations` | Connector configuration and proven health |
-| `POST /api/integrations/{name}/check` | Perform and persist a connection check |
-| `POST /api/runs` / `GET /api/runs/{id}` | Execute a task / read its trace |
-| `POST /api/evaluation-jobs` | Idempotently create regression or benchmark work |
-| `GET /api/evaluation-jobs/{id}` | Read job state |
-| `GET /api/evaluation-jobs/{id}/results` | Read completed results |
-| `POST /api/experiments` | Create an idempotent, same-cohort multi-model comparison |
-| `GET /api/experiments` / `GET /api/experiments/{id}` | List or inspect persisted comparisons |
-| `GET /api/experiments/{id}/failures` | Inspect failed candidate runs side by side |
-| `POST /api/traces/ingest` | Idempotently import and redact a production trace |
-| `POST /api/runs/{id}/feedback` / `GET /api/review-queue` | Capture product feedback and triage quality signals |
-| `POST /api/runs/{id}/promote` / `GET /api/dataset-versions` | Version production failures as candidate tests |
-| `GET /api/canaries` / `POST /api/canaries/run` | Read or execute non-blocking live connector checks |
-| `POST /api/webhooks/github` | Receive verified PR events |
+| `POST /api/runs` | Execute an agent task and persist its trace |
+| `POST /api/evaluation-jobs` | Create idempotent regression or benchmark work |
+| `POST /api/experiments` | Start a same-cohort multi-model comparison |
+| `POST /api/traces/ingest` | Import and redact production traces idempotently |
+| `GET /api/review-queue` | Triage feedback and failed runs |
+| `POST /api/runs/{id}/promote` | Create an immutable candidate dataset version |
+| `POST /api/canaries/run` | Execute non-blocking live connector checks |
+| `GET /api/safety` | Inspect active policies, events, and acknowledged gaps |
+| `POST /api/webhooks/github` | Receive verified pull-request events |
+
+The complete interactive contract is available at `/docs` when the API is running.
 
 ## Deploy
 
-`render.yaml` provisions the API, worker, PostgreSQL, and Redis. Create a Render Blueprint from the repository, fill every `sync: false` secret/config value, verify `/health/ready`, then point `FRONTEND_ORIGIN` at the final HTTPS frontend origin. The API pre-deploy step runs `alembic upgrade head`.
+[`render.yaml`](render.yaml) provisions the API, worker, PostgreSQL, and Redis. Create a Render Blueprint, fill every `sync: false` value, verify `/health/ready`, and set `FRONTEND_ORIGIN` to the final HTTPS frontend origin.
 
-For Vercel, import the same repository and set the project Root Directory to `frontend`. Configure `NEXT_PUBLIC_API_URL=https://<render-api-host>` and `NEXT_PUBLIC_DEMO_MODE=false`. Build settings are detected from `frontend/vercel.json`. Redeploy after changing any `NEXT_PUBLIC_*` value because it is embedded at build time.
+For Vercel, import this repository with `frontend` as the Root Directory and set:
 
-Do not expose PostgreSQL or Redis publicly. Keep Render internal connection strings, restrict allowed frontend origins, and leave GitHub checks disabled until all least-privilege settings are present.
+```dotenv
+NEXT_PUBLIC_API_URL=https://<render-api-host>
+NEXT_PUBLIC_DEMO_MODE=false
+```
 
-### Security boundary still required for a public SaaS
+Do not expose PostgreSQL or Redis publicly. Keep GitHub checks disabled until the least-privilege App configuration is complete.
 
-This slice is suitable for a private, access-controlled deployment; it is not yet a multi-tenant SaaS boundary. The dashboard and experiment APIs do not authenticate human users or enforce workspace membership. Put the deployment behind platform access controls until an identity provider, workspace/member model, and owner/editor/viewer authorization rules are implemented end to end. Choosing that identity provider is intentionally not hidden behind a fake local user.
-
-Trace ingestion already applies bounded payloads, an ingestion secret, and redaction, but automated retention deletion is also still outstanding. Define the legal/product retention periods before adding a scheduled deletion job so evidence needed for audits is not silently destroyed.
-
-## Verification
+## Verify the project
 
 ```bash
 cd backend
 uv run ruff check app tests
 uv run pytest -q
-ENVIRONMENT=test BASELINE_FIXTURE_CONNECTORS=true uv run python -m app.evals.cli --provider mock --all --baseline 0.90 --threshold 0.01
+ENVIRONMENT=test BASELINE_FIXTURE_CONNECTORS=true \
+  uv run python -m app.evals.cli --provider mock --all --baseline 0.90 --threshold 0.01
 uv run alembic upgrade head
-
-cd ../frontend
-npm ci
-npm run lint
-NEXT_PUBLIC_DEMO_MODE=false NEXT_PUBLIC_API_URL=https://api.example.invalid npm run build
 ```
 
-See [docs/architecture.md](docs/architecture.md) for boundaries, state transitions, deployment topology, and source references.
+```bash
+cd frontend
+npm ci
+npm run lint
+NEXT_PUBLIC_DEMO_MODE=false \
+NEXT_PUBLIC_API_URL=https://api.example.invalid \
+  npm run build
+```
+
+CI runs backend static analysis and tests, all 218 blocking evaluations, migration validation, the production-mode frontend build, and deployment-definition checks.
+
+## Current boundary
+
+Baseline is designed for a private, access-controlled deployment today. It does **not** yet claim a complete public multi-tenant SaaS boundary: human authentication, workspace membership and roles, isolated arbitrary-code execution, covert-channel detection, and automated retention/legal-hold policy still require implementation.
+
+This distinction is intentional. The product should make missing controls visible instead of turning incomplete safety work into a green badge.
+
+## Project map
+
+```text
+backend/                 FastAPI, agents, evals, connectors, jobs, and Alembic
+frontend/                Next.js dashboard and experiment workflow
+backend/app/evals/       Golden catalog, evaluators, live canaries, and snapshots
+docs/architecture.md     System design, invariants, and trust boundaries
+render.yaml              Render API, worker, PostgreSQL, and Redis blueprint
+.github/workflows/       CI release gate
+```
 
 ## License
 
-MIT
+[MIT](LICENSE)
+
+---
+
+<p align="center">
+  <strong>Evidence before deployment.</strong><br>
+  If that is how you want agents to ship, <a href="https://github.com/Gaurav890/baseline">star Baseline</a>.
+</p>
