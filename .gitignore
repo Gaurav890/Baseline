@@ -14,3 +14,5 @@ out/
 coverage/
 dist/
 
+# Local launch-video project and render workspace. Public README media lives in docs/media/.
+brag-output/
