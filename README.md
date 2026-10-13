@@ -12,10 +12,14 @@
   <img alt="Golden scenarios: 218" src="https://img.shields.io/badge/golden_scenarios-218-f15a2a">
 </p>
 
-[![Watch the 23-second Baseline overview](docs/media/baseline-poster.jpg)](docs/media/baseline-demo.mp4?raw=1)
+![Baseline product overview poster](docs/media/baseline-poster.jpg)
+
+https://github.com/user-attachments/assets/e0dc4e97-9bdc-425b-b016-7ab026ef3650
 
 <p align="center">
-  <a href="docs/media/baseline-demo.mp4?raw=1"><strong>▶ Watch the 23-second product overview</strong></a>
+  <a href="https://github.com/user-attachments/assets/e0dc4e97-9bdc-425b-b016-7ab026ef3650"><strong>▶ Watch video</strong></a>
+  ·
+  <a href="docs/media/baseline-demo.mp4?raw=true"><strong>Download MP4</strong></a>
   ·
   <a href="#quick-start"><strong>Run it locally</strong></a>
   ·
